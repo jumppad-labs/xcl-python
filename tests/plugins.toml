@@ -1,0 +1,7 @@
+# The Docker example plugin release the Python plugin tests install. It is
+# published as a signed GitHub release of jumppad-labs/xcl-plugin-docker; the
+# key the tests trust is tests/keys/jumppad-labs.asc, the jumppad-labs
+# release key published at https://xcl.dev/keys/jumppad-labs-releases.asc.
+[docker]
+repository = "jumppad-labs/xcl-plugin-docker"
+version = "v0.2.0"
