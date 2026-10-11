@@ -41,12 +41,24 @@ from xcl._errors import (
     UnrecoverableError,
     UnregisteredTypeError,
 )
+from xcl._entity import Entity, Meta, Resource, entity
+from xcl._schema import SchemaError
+from xcl._types import UNKNOWN, Computed, Sensitive, field
 from xcl._version import __version__
 from xcl.config import Config
 
 __all__ = [
     "__version__",
     "Config",
+    "entity",
+    "Resource",
+    "Entity",
+    "Meta",
+    "Sensitive",
+    "Computed",
+    "field",
+    "UNKNOWN",
+    "SchemaError",
     "Error",
     "Problem",
     "NotFoundError",
