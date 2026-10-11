@@ -3,8 +3,8 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "xcl"
-description = "XCL, the declarative configuration language, for Python: the xcl engine driven through a shared library"
+name = "xcl-lang"
+description = "XCL, the declarative configuration language, for Python: the xcl engine driven through a shared library, imported as xcl"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

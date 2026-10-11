@@ -296,7 +296,7 @@ class InternalBindingError(Error):
     def __init__(self, method: str, status: int) -> None:
         reason = _STATUS_REASONS.get(status, "unknown status")
         super().__init__(
-            f"the engine refused {method} with status {status} ({reason}); this is a bug in the xcl package",
+            f"the engine refused {method} with status {status} ({reason}); this is a bug in the xcl-lang package",
             details={"method": method, "status": str(status)},
         )
         self.method = method

@@ -12,10 +12,10 @@ adds its own Python functions to configuration.
 ## Install
 
 ```
-pip install xcl
+pip install xcl-lang
 ```
 
-No Go toolchain and no C compiler are needed: each wheel bundles the engine
+The distribution is `xcl-lang` on PyPI and is imported as `xcl`. No Go toolchain and no C compiler are needed: each wheel bundles the engine
 for its platform. Wheels are published for
 
 - Linux x86-64 and arm64, glibc 2.28 or later (`manylinux_2_28`) and musl (`musllinux_1_2`);
@@ -243,7 +243,7 @@ The package is built against a checkout of xcl: `make protos` generates the
 message classes from its `proto/` with protoc, `make libxcl` builds the
 engine into `xcl/_lib` with Go and a C compiler, `make plugins` builds the
 fixture plugins the integration tests use, and `make test` runs the suite.
-`PARITY.md` lists every Go operation and lookup with its Python equivalent.
+`PARITY.md` lists every Go operation and lookup with its Python equivalent. The distribution is published as `xcl-lang`, since the name `xcl` on PyPI belongs to another project; the import name is `xcl`.
 
 ## Licence
 

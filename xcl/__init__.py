@@ -1,6 +1,7 @@
 """XCL, the declarative configuration language, for Python.
 
-The package drives the xcl engine, a Go shared library bundled in the wheel,
+The package, published as ``xcl-lang`` and imported as ``xcl``, drives the xcl
+engine, a Go shared library bundled in the wheel,
 so a Python program validates, diffs, applies, loads and destroys
 configuration exactly as a Go program does, uses the same Go plugins, and
 adds its own Python functions to configuration. ``import xcl`` loads nothing:

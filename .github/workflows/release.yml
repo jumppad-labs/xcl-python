@@ -1,4 +1,4 @@
-# Publishes the xcl package for one xcl release. The xcl release workflow
+# Publishes the xcl-lang package, imported as xcl, for one xcl release. The xcl release workflow
 # dispatches it with the tag once the signed engine archives are attached to
 # the xcl GitHub release; it can also be run by hand for a tag.
 #
@@ -163,7 +163,7 @@ jobs:
         env:
           XCL_SRC: ${{ github.workspace }}/xcl
         run: |
-          python -m pip uninstall -y xcl
+          python -m pip uninstall -y xcl-lang
           python -m pip install dist/*.whl pytest
           # the installed wheel is what runs: the suite is run from outside
           # the source tree so the package is imported from site-packages
@@ -267,7 +267,7 @@ jobs:
           done
           export PATH="$HOME/clean-bin:$PATH"
           for attempt in $(seq 1 20); do
-            if python -m pip install --no-cache-dir "xcl==$VERSION"; then break; fi
-            echo "xcl==$VERSION is not on PyPI yet, waiting (attempt $attempt)"; sleep 30
+            if python -m pip install --no-cache-dir "xcl-lang==$VERSION"; then break; fi
+            echo "xcl-lang==$VERSION is not on PyPI yet, waiting (attempt $attempt)"; sleep 30
           done
           python -c "import xcl; xcl.Config().close(); v = xcl.engine_version(); print(v); assert v == '$TAG', v"

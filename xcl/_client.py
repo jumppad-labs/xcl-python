@@ -84,8 +84,8 @@ class Client:
             self._engine_version = response.version
             if self._check_version and normalise_version(response.version) != normalise_version(__version__):
                 raise _errors.EngineVersionError(
-                    f"the xcl engine reports version {response.version}, but this is xcl package "
-                    f"version {__version__}; the package only runs against the engine of its own release",
+                    f"the xcl engine reports version {response.version}, but this is xcl-lang package "
+                    f"version {__version__}; the xcl-lang package only runs against the engine of its own release",
                     package=__version__,
                     engine=response.version,
                 )

@@ -139,7 +139,7 @@ class InProcessTransport:
                     raise EngineVersionError(
                         f"the xcl engine at {self.path} implements ABI version {abi}, "
                         f"but this package was built for ABI version {ABI_VERSION}; "
-                        "install the xcl package matching the engine",
+                        "install the xcl-lang package matching the engine",
                         package=f"abi {ABI_VERSION}",
                         engine=f"abi {abi}",
                     )
