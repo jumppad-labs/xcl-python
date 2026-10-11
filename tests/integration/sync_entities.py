@@ -1,0 +1,122 @@
+"""The entity classes and state store the synchronous integration tests use.
+
+They live in a module of their own, rather than in the test module, so a
+test that loads state in a second interpreter registers exactly the same
+classes the first one saved with.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import xcl
+
+
+@dataclass
+class Health:
+    """A nested block: ``health { path = ..., interval = ... }``."""
+
+    path: str
+    interval: int = 10
+
+
+@dataclass
+class Volume:
+    """A repeated block written with a name: ``volume "data" { ... }``."""
+
+    name: str = xcl.field(label=True, default="")
+    source: str = ""
+    target: str = ""
+
+
+@dataclass
+class Listener:
+    """A map of named blocks: ``listener "http" { port = 80 }``."""
+
+    name: str = xcl.field(label=True, default="")
+    port: int = 0
+
+
+@xcl.entity("sync_app")
+@dataclass
+class SyncApp(xcl.Resource):
+    """Every annotation form the schema supports, on one config-only type."""
+
+    image: str
+    replicas: int = 2
+    password: xcl.Sensitive[str] | None = None
+    endpoint: xcl.Computed[str] = None
+    health: Health | None = None
+    volume: list[Volume] = field(default_factory=list)
+    listener: dict[str, Listener] = field(default_factory=dict)
+    region: str | None = None
+
+
+@xcl.entity("sync_database", "postgres")
+@dataclass
+class SyncDatabase(xcl.Resource):
+    """A type with a subtype: ``sync_database "postgres" "main" {}``."""
+
+    version: str = "16"
+
+
+def registry() -> xcl.LocalRegistry:
+    """A registry declaring both classes."""
+    found = xcl.LocalRegistry()
+    found.register_type(SyncApp)
+    found.register_type(SyncDatabase)
+    return found
+
+
+class JsonLinesStore:
+    """A state store that keeps the engine's records as JSON lines in one file."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+
+    def load(self) -> list[bytes]:
+        if not self.path.exists():
+            return []
+        return [line.encode() for line in self.path.read_text().splitlines() if line.strip()]
+
+    def save(self, entities: list[bytes]) -> None:
+        self.path.write_text("".join(e.decode() + "\n" for e in entities))
+
+    def exists(self) -> bool:
+        return self.path.exists()
+
+    def clear(self) -> None:
+        if self.path.exists():
+            self.path.unlink()
+
+    def records(self) -> list[dict]:
+        """The saved records decoded, for assertions."""
+        return [json.loads(line) for line in self.load()]
+
+
+class MemoryStore:
+    """A state store that keeps the engine's records in memory."""
+
+    def __init__(self) -> None:
+        self.saved: list[bytes] = []
+
+    def load(self) -> list[bytes]:
+        return list(self.saved)
+
+    def save(self, entities: list[bytes]) -> None:
+        self.saved = list(entities)
+
+    def exists(self) -> bool:
+        return bool(self.saved)
+
+    def clear(self) -> None:
+        self.saved = []
+
+    def record(self, address: str) -> bytes:
+        """The saved record of the entity at ``address``."""
+        for raw in self.saved:
+            if json.loads(raw).get("meta", {}).get("id") == address:
+                return raw
+        raise KeyError(address)

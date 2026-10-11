@@ -44,12 +44,26 @@ from xcl._errors import (
 from xcl._entity import Entity, Meta, Resource, entity
 from xcl._schema import SchemaError
 from xcl._types import UNKNOWN, Computed, Sensitive, field
+from xcl._poll import StateStore
 from xcl._version import __version__
+from xcl import mask
 from xcl.config import Config
+from xcl.diff import Change, Diff, ResourceDiff, Summary
+from xcl.events import Event
+from xcl.registry import GitHubRegistry, LocalRegistry
 
 __all__ = [
     "__version__",
     "Config",
+    "LocalRegistry",
+    "GitHubRegistry",
+    "StateStore",
+    "Event",
+    "Diff",
+    "ResourceDiff",
+    "Change",
+    "Summary",
+    "mask",
     "entity",
     "Resource",
     "Entity",
