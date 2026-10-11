@@ -1,0 +1,11 @@
+# virtual environments and build output are never committed
+.venv/
+build/
+dist/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+
+# the engine built for the local platform by make libxcl, and release
+# archives downloaded for wheels
+xcl/_lib/
