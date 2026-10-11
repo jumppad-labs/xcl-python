@@ -1,0 +1,22 @@
+schema: 2
+written_by: dev
+description: 'The xcl Python package: loads libxcl and offers a synchronous and an asyncio API, published to PyPI as xcl.'
+role: language SDK
+tags:
+    - python
+    - pypi
+    - sdk
+    - ffi
+    - xcl
+source:
+    provider: file
+    config:
+        location: ..
+knowledge:
+    provider: file
+    config:
+        location: knowledge
+changelog:
+    provider: file
+    config:
+        directory: changelog
