@@ -1,0 +1,15 @@
+# A network and an nginx container handled by the Docker example plugin,
+# jumppad-labs/xcl-plugin-docker, mirroring its examples/basic. The names are
+# unique to these tests so they can run beside the plugin's own examples.
+docker "network" "xcl_python_test" {
+  subnet = "10.74.0.0/24"
+}
+
+docker "container" "xcl_python_test" {
+  image = "nginx:1.27-alpine"
+
+  network {
+    name    = docker.network.xcl_python_test.meta.name
+    aliases = ["python"]
+  }
+}
