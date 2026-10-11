@@ -51,8 +51,8 @@ Engine = "https://github.com/jumppad-labs/xcl"
 path = "xcl/_version.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["xcl/", "tests/", "Makefile", "README.md", "LICENSE", "PARITY.md", "hatch_build.py", "xcl-ref.txt"]
-exclude = ["xcl/_lib/"]
+only-include = ["xcl", "tests", "Makefile", "README.md", "LICENSE", "PARITY.md", "hatch_build.py", "xcl-ref.txt"]
+exclude = ["xcl/_lib/", "**/__pycache__/", "build/"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["xcl"]

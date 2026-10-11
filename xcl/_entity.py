@@ -148,10 +148,12 @@ class Entity(Mapping[str, Any]):
 
     @property
     def meta(self) -> Meta:
+        """What the engine recorded about the entity: its address and where it was declared."""
         return self._meta
 
     @property
     def address(self) -> str:
+        """The entity's address, such as ``docker.network.main``."""
         return self._meta.id
 
     def __getitem__(self, key: str) -> Any:

@@ -1,0 +1,273 @@
+# Publishes the xcl package for one xcl release. The xcl release workflow
+# dispatches it with the tag once the signed engine archives are attached to
+# the xcl GitHub release; it can also be run by hand for a tag.
+#
+# For each of the eight platforms the workflow downloads the engine archive,
+# the checksums and their signature from the xcl release, verifies the
+# signature against keys/jumppad-labs.asc and the archive against the
+# checksums, places the engine in the package, regenerates the messages from
+# xcl at the tag, builds a wheel tagged py3-none-<platform> at the tag's
+# version, and runs the parity suite against that wheel. An sdist is built
+# too. Everything is published with PyPI Trusted Publishing from the pypi
+# environment, and the published package is then installed on every platform
+# with no Go or C compiler on the path and smoke-tested.
+
+name: Release
+
+on:
+  repository_dispatch:
+    types: [xcl-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The xcl tag to release, e.g. v0.4.0
+        required: true
+        type: string
+
+env:
+  GO_VERSION: '1.27.0'
+
+jobs:
+  settings:
+    name: Settings
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.settings.outputs.tag }}
+      version: ${{ steps.settings.outputs.version }}
+    steps:
+      - id: settings
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            tag="${{ github.event.client_payload.tag }}"
+          else
+            tag="${{ inputs.tag }}"
+          fi
+          case "$tag" in
+            v*) ;;
+            *) echo "the tag must start with v, got $tag"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+  wheels:
+    name: Wheel ${{ matrix.target.platform }}
+    needs: settings
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { platform: manylinux_2_28_x86_64,  asset: linux_amd64,      runner: ubuntu-latest,    lib: libxcl.so }
+          - { platform: manylinux_2_28_aarch64, asset: linux_arm64,      runner: ubuntu-24.04-arm, lib: libxcl.so }
+          - { platform: musllinux_1_2_x86_64,   asset: linux_amd64_musl, runner: ubuntu-latest,    lib: libxcl.so,    container: 'python:3-alpine' }
+          - { platform: musllinux_1_2_aarch64,  asset: linux_arm64_musl, runner: ubuntu-24.04-arm, lib: libxcl.so,    container: 'python:3-alpine' }
+          - { platform: macosx_11_0_x86_64,     asset: darwin_amd64,     runner: macos-13,         lib: libxcl.dylib }
+          - { platform: macosx_11_0_arm64,      asset: darwin_arm64,     runner: macos-latest,     lib: libxcl.dylib }
+          - { platform: win_amd64,              asset: windows_amd64,    runner: windows-latest,   lib: libxcl.dll }
+          - { platform: win_arm64,              asset: windows_arm64,    runner: windows-11-arm,   lib: libxcl.dll }
+    container: ${{ matrix.target.container || null }}
+    env:
+      TAG: ${{ needs.settings.outputs.tag }}
+      VERSION: ${{ needs.settings.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install the container toolchain
+        if: matrix.target.container != ''
+        run: apk add --no-cache bash build-base git go gnupg github-cli make protobuf-dev tar
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jumppad-labs/xcl
+          ref: ${{ env.TAG }}
+          path: xcl
+
+      - uses: actions/setup-go@v5
+        if: matrix.target.container == ''
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: actions/setup-python@v5
+        if: matrix.target.container == ''
+        with:
+          python-version: '3.x'
+
+      - uses: arduino/setup-protoc@v3
+        if: matrix.target.container == ''
+        with:
+          version: '28.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download and verify the engine archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p engine && cd engine
+          case '${{ matrix.target.asset }}' in
+            windows_*) archive="libxcl_${VERSION}_${{ matrix.target.asset }}.zip" ;;
+            *)         archive="libxcl_${VERSION}_${{ matrix.target.asset }}.tar.gz" ;;
+          esac
+          gh release download "$TAG" --repo jumppad-labs/xcl \
+            --pattern "$archive" \
+            --pattern "libxcl_${VERSION}_checksums.txt" \
+            --pattern "libxcl_${VERSION}_checksums.txt.sig"
+          gpg --batch --import ../tests/keys/jumppad-labs.asc
+          gpg --batch --verify "libxcl_${VERSION}_checksums.txt.sig" "libxcl_${VERSION}_checksums.txt"
+          grep " $archive\$" "libxcl_${VERSION}_checksums.txt" | sha256sum -c -
+          case "$archive" in
+            *.zip)    unzip -q "$archive" ;;
+            *.tar.gz) tar -xzf "$archive" ;;
+          esac
+          mkdir -p ../xcl/_lib
+          cp '${{ matrix.target.lib }}' ../xcl/_lib/
+
+      - name: Set the version from the tag
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import os, re
+          path = "xcl/_version.py"
+          text = open(path).read()
+          text = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{os.environ["VERSION"]}"', text)
+          open(path, "w").write(text)
+          EOF
+          grep __version__ xcl/_version.py
+
+      - name: Regenerate the messages from xcl at the tag
+        shell: bash
+        run: make protos XCL_SRC="$PWD/xcl" PYTHON=python
+
+      - name: Check the engine reports the tag
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -c "import xcl; v = xcl.engine_version(); print(v); assert v == '$TAG', v"
+
+      - name: Build the wheel
+        shell: bash
+        env:
+          XCL_WHEEL_PLATFORM: ${{ matrix.target.platform }}
+        run: |
+          python -m pip install build
+          python -m build --wheel
+          ls dist
+
+      - name: Build the fixture plugins and the Go parity program
+        shell: bash
+        run: make plugins XCL_SRC="$PWD/xcl" PYTHON=python
+
+      - name: Test the wheel
+        shell: bash
+        env:
+          XCL_SRC: ${{ github.workspace }}/xcl
+        run: |
+          python -m pip uninstall -y xcl
+          python -m pip install dist/*.whl pytest
+          # the installed wheel is what runs: the suite is run from outside
+          # the source tree so the package is imported from site-packages
+          python -m pytest -q tests/parity tests/integration/test_load.py --rootdir . -p no:cacheprovider
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target.platform }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Source distribution
+    needs: settings
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.settings.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: jumppad-labs/xcl
+          ref: ${{ needs.settings.outputs.tag }}
+          path: xcl
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: '28.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set the version and regenerate the messages
+        run: |
+          sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$VERSION\"/" xcl/_version.py
+          make protos XCL_SRC="$PWD/xcl" PYTHON=python
+      - run: python -m pip install build twine && python -m build --sdist && python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: [settings, wheels, sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect the distributions
+        run: |
+          mkdir -p dist
+          find artifacts -name '*.whl' -exec cp {} dist/ \;
+          find artifacts -name '*.tar.gz' -exec cp {} dist/ \;
+          ls -la dist
+          [ "$(ls dist/*.whl | wc -l)" -eq 8 ] || { echo "expected 8 wheels"; exit 1; }
+      - uses: pypa/gh-action-pypi-publish@v1.12.4
+        with:
+          packages-dir: dist
+
+  # install the published package on every platform with no Go or C compiler
+  # on the path, and check it runs and reports the tag
+  install-check:
+    name: Install check ${{ matrix.target.platform }}
+    needs: [settings, publish]
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { platform: manylinux_2_28_x86_64,  runner: ubuntu-latest }
+          - { platform: manylinux_2_28_aarch64, runner: ubuntu-24.04-arm }
+          - { platform: musllinux_1_2_x86_64,   runner: ubuntu-latest,    container: 'python:3-alpine' }
+          - { platform: musllinux_1_2_aarch64,  runner: ubuntu-24.04-arm, container: 'python:3-alpine' }
+          - { platform: macosx_11_0_x86_64,     runner: macos-13 }
+          - { platform: macosx_11_0_arm64,      runner: macos-latest }
+          - { platform: win_amd64,              runner: windows-latest }
+          - { platform: win_arm64,              runner: windows-11-arm }
+    container: ${{ matrix.target.container || null }}
+    env:
+      TAG: ${{ needs.settings.outputs.tag }}
+      VERSION: ${{ needs.settings.outputs.version }}
+    steps:
+      - uses: actions/setup-python@v5
+        if: matrix.target.container == ''
+        with:
+          python-version: '3.x'
+
+      - name: Install from PyPI without a toolchain
+        shell: bash
+        run: |
+          # hide every Go and C compiler the runner has
+          mkdir -p "$HOME/clean-bin"
+          for tool in go gcc cc clang zig; do
+            printf '#!/bin/sh\necho "%s is not available" >&2\nexit 127\n' "$tool" > "$HOME/clean-bin/$tool"
+            chmod +x "$HOME/clean-bin/$tool"
+          done
+          export PATH="$HOME/clean-bin:$PATH"
+          for attempt in $(seq 1 20); do
+            if python -m pip install --no-cache-dir "xcl==$VERSION"; then break; fi
+            echo "xcl==$VERSION is not on PyPI yet, waiting (attempt $attempt)"; sleep 30
+          done
+          python -c "import xcl; xcl.Config().close(); v = xcl.engine_version(); print(v); assert v == '$TAG', v"

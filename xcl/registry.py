@@ -124,10 +124,12 @@ class GitHubRegistry:
 
     @property
     def types(self) -> list[type]:
+        """The classes registered on this registry, in order."""
         return list(self._types)
 
     @property
     def functions(self) -> dict[str, Callable[..., Any]]:
+        """The functions this registry offers; a GitHub registry offers none of its own."""
         return {}
 
     def _to_proto(self) -> core_pb2.Registry:
