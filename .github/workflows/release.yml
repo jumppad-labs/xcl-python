@@ -2,15 +2,17 @@
 # dispatches it with the tag once the signed engine archives are attached to
 # the xcl GitHub release; it can also be run by hand for a tag.
 #
-# For each of the eight platforms the workflow downloads the engine archive,
-# the checksums and their signature from the xcl release, verifies the
-# signature against keys/jumppad-labs.asc and the archive against the
-# checksums, places the engine in the package, regenerates the messages from
-# xcl at the tag, builds a wheel tagged py3-none-<platform> at the tag's
-# version, and runs the parity suite against that wheel. An sdist is built
-# too. Everything is published with PyPI Trusted Publishing from the pypi
-# environment, and the published package is then installed on every platform
-# with no Go or C compiler on the path and smoke-tested.
+# For each of the eight platforms the workflow downloads the engine program's
+# archive, xcl-core_<version>_<os>_<arch>[_musl], the checksums and their
+# signature from the xcl release, verifies the signature against
+# keys/jumppad-labs.asc and the archive against the checksums, places the
+# program in the package's xcl/_bin, regenerates the messages from xcl at the
+# tag, builds a wheel tagged py3-none-<platform> at the tag's version, and
+# runs the parity suite against that wheel. An sdist is built too. Everything
+# is published with PyPI Trusted Publishing from the pypi environment, and the
+# published package is then installed on every platform with no Go or C
+# compiler on the path, where .github/scripts/install_check.py applies a
+# configuration, reads the entity back and checks the engine reports the tag.
 
 name: Release
 
@@ -20,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: The xcl tag to release, e.g. v0.4.0
+        description: The xcl tag to release, e.g. v0.5.0
         required: true
         type: string
 
@@ -57,12 +59,12 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { platform: manylinux_2_28_x86_64,  asset: linux_amd64,      runner: ubuntu-latest,    lib: libxcl.so }
-          - { platform: manylinux_2_28_aarch64, asset: linux_arm64,      runner: ubuntu-24.04-arm, lib: libxcl.so }
-          - { platform: macosx_11_0_x86_64,     asset: darwin_amd64,     runner: macos-15-intel,   lib: libxcl.dylib }
-          - { platform: macosx_11_0_arm64,      asset: darwin_arm64,     runner: macos-latest,     lib: libxcl.dylib }
-          - { platform: win_amd64,              asset: windows_amd64,    runner: windows-latest,   lib: libxcl.dll }
-          - { platform: win_arm64,              asset: windows_arm64,    runner: windows-11-arm,   lib: libxcl.dll }
+          - { platform: manylinux_2_28_x86_64,  asset: linux_amd64,      runner: ubuntu-latest,    exe: xcl-core }
+          - { platform: manylinux_2_28_aarch64, asset: linux_arm64,      runner: ubuntu-24.04-arm, exe: xcl-core }
+          - { platform: macosx_11_0_x86_64,     asset: darwin_amd64,     runner: macos-15-intel,   exe: xcl-core }
+          - { platform: macosx_11_0_arm64,      asset: darwin_arm64,     runner: macos-latest,     exe: xcl-core }
+          - { platform: win_amd64,              asset: windows_amd64,    runner: windows-latest,   exe: xcl-core.exe }
+          - { platform: win_arm64,              asset: windows_arm64,    runner: windows-11-arm,   exe: xcl-core.exe }
     env:
       TAG: ${{ needs.settings.outputs.tag }}
       VERSION: ${{ needs.settings.outputs.version }}
@@ -89,28 +91,32 @@ jobs:
           version: '28.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download and verify the engine archive
+      - name: Download and verify the engine program
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p engine && cd engine
           case '${{ matrix.target.asset }}' in
-            windows_*) archive="libxcl_${VERSION}_${{ matrix.target.asset }}.zip" ;;
-            *)         archive="libxcl_${VERSION}_${{ matrix.target.asset }}.tar.gz" ;;
+            windows_*) archive="xcl-core_${VERSION}_${{ matrix.target.asset }}.zip" ;;
+            *)         archive="xcl-core_${VERSION}_${{ matrix.target.asset }}.tar.gz" ;;
           esac
           gh release download "$TAG" --repo jumppad-labs/xcl \
             --pattern "$archive" \
-            --pattern "libxcl_${VERSION}_checksums.txt" \
-            --pattern "libxcl_${VERSION}_checksums.txt.sig"
+            --pattern "xcl-core_${VERSION}_checksums.txt" \
+            --pattern "xcl-core_${VERSION}_checksums.txt.sig"
           gpg --batch --import ../tests/keys/jumppad-labs.asc
-          gpg --batch --verify "libxcl_${VERSION}_checksums.txt.sig" "libxcl_${VERSION}_checksums.txt"
-          grep " $archive\$" "libxcl_${VERSION}_checksums.txt" | sha256sum -c -
+          gpg --batch --verify "xcl-core_${VERSION}_checksums.txt.sig" "xcl-core_${VERSION}_checksums.txt"
+          grep " $archive\$" "xcl-core_${VERSION}_checksums.txt" | sha256sum -c -
           case "$archive" in
             *.zip)    unzip -q "$archive" ;;
             *.tar.gz) tar -xzf "$archive" ;;
           esac
-          mkdir -p ../xcl/_lib
-          cp '${{ matrix.target.lib }}' ../xcl/_lib/
+          mkdir -p ../xcl/_bin
+          cp '${{ matrix.target.exe }}' ../xcl/_bin/
+          case '${{ matrix.target.exe }}' in
+            *.exe) ;;
+            *) chmod +x '../xcl/_bin/${{ matrix.target.exe }}' ;;
+          esac
 
       - name: Set the version from the tag
         shell: bash
@@ -152,12 +158,20 @@ jobs:
         shell: bash
         env:
           XCL_SRC: ${{ github.workspace }}/xcl-src
+          XCL_TEST_STRICT: '1'
+          XCL_TEST_ENGINES: subprocess
         run: |
           python -m pip uninstall -y xcl-lang
           python -m pip install dist/*.whl pytest
           # the installed wheel is what runs: the suite is run from outside
           # the source tree so the package is imported from site-packages
           python -m pytest -q tests/parity tests/integration/test_load.py --rootdir . -p no:cacheprovider
+
+      - name: Check the installed engine program is executable
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          python -c "import os, xcl; from xcl._transport.subprocess import program_path; p = program_path(); print(p); assert p.is_file(), p; assert os.access(p, os.X_OK), f'{p} is not executable'"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -198,7 +212,7 @@ jobs:
           ASSET: ${{ matrix.target.asset }}
         run: |
           docker run --rm -v "$PWD:/work" -w /work \
-            -e TAG -e VERSION -e GH_TOKEN -e XCL_WHEEL_PLATFORM -e ASSET -e XCL_SRC=/work/xcl-src \
+            -e TAG -e VERSION -e GH_TOKEN -e XCL_WHEEL_PLATFORM -e ASSET -e GO_VERSION -e XCL_SRC=/work/xcl-src \
             python:3-alpine sh -e .github/scripts/musl-wheel.sh
 
       - uses: actions/upload-artifact@v4
@@ -261,7 +275,8 @@ jobs:
           packages-dir: dist
 
   # install the published package on every platform with no Go or C compiler
-  # on the path, and check it runs and reports the tag
+  # on the path, and check it applies a configuration, reads it back and
+  # reports the tag
   install-check:
     name: Install check ${{ matrix.target.platform }}
     needs: [settings, publish]
@@ -280,6 +295,10 @@ jobs:
       TAG: ${{ needs.settings.outputs.tag }}
       VERSION: ${{ needs.settings.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -298,7 +317,7 @@ jobs:
             if python -m pip install --no-cache-dir "xcl-lang==$VERSION"; then break; fi
             echo "xcl-lang==$VERSION is not on PyPI yet, waiting (attempt $attempt)"; sleep 30
           done
-          python -c "import xcl; xcl.Config().close(); v = xcl.engine_version(); print(v); assert v == '$TAG', v"
+          python .github/scripts/install_check.py
 
   # the same check on musl, in a plain Alpine image that has no compiler at all
   install-check-musl:
@@ -315,12 +334,16 @@ jobs:
       TAG: ${{ needs.settings.outputs.tag }}
       VERSION: ${{ needs.settings.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Install from PyPI without a toolchain
         shell: bash
         run: |
-          docker run --rm -e TAG -e VERSION python:3-alpine sh -ec '
+          docker run --rm -v "$PWD:/work" -w /work -e TAG -e VERSION python:3-alpine sh -ec '
             for attempt in $(seq 1 20); do
               if python -m pip install --no-cache-dir "xcl-lang==$VERSION"; then break; fi
               echo "xcl-lang==$VERSION is not on PyPI yet, waiting (attempt $attempt)"; sleep 30
             done
-            python -c "import xcl; xcl.Config().close(); v = xcl.engine_version(); print(v); assert v == \"$TAG\", v"'
+            python .github/scripts/install_check.py'

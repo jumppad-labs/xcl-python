@@ -1,7 +1,16 @@
 # Tests the package on every platform it is published for, against every
-# supported CPython, with the engine built from the xcl checkout named in
-# xcl-ref.txt. Go and a C compiler are needed here only to build that engine;
-# a released wheel bundles it and needs neither.
+# supported CPython, with the engine program, xcl-core, built from the xcl
+# checkout named in xcl-ref.txt. Go is needed here only to build that program
+# and the fixture plugins, and no C compiler is needed for either; a released
+# wheel bundles the program and needs neither.
+#
+# The in-process route stays tested: the Linux glibc x86-64 job also builds
+# the engine as a shared library, which needs a C compiler, and runs the same
+# suite a second time with XCL_TRANSPORT=inprocess.
+#
+# Every test run is strict: XCL_TEST_STRICT=1 fails a test whose engine is
+# missing when XCL_TEST_ENGINES lists that engine's route, so a job that
+# should have built an engine can never go green with its tests skipped.
 #
 # The Docker plugin tests run where a Docker engine is reachable, the Linux
 # x86-64 runner; everywhere else they skip. musl is tested in Alpine
@@ -55,10 +64,10 @@ jobs:
           version: '28.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate the messages and build the engine and fixture plugins
+      - name: Generate the messages and build the engine program and fixture plugins
         shell: bash
         run: |
-          make protos libxcl plugins XCL_SRC="$PWD/xcl-src" PYTHON=python
+          make protos engine plugins XCL_SRC="$PWD/xcl-src" PYTHON=python
 
       - name: Install
         shell: bash
@@ -68,12 +77,33 @@ jobs:
         shell: bash
         env:
           XCL_SRC: ${{ github.workspace }}/xcl-src
+          XCL_TEST_STRICT: '1'
+          XCL_TEST_ENGINES: subprocess
         run: python -m pytest -q
 
-  # musl: the same suite inside Alpine, on both Linux architectures. The
-  # checkouts happen on the runner and Alpine is started by hand, because
-  # GitHub cannot run its JavaScript actions in an Alpine job container on
-  # the arm64 runners.
+      # the in-process route: the shared library, which needs the runner's C
+      # compiler, and cffi to load it
+      - name: Build the shared library
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          make libxcl XCL_SRC="$PWD/xcl-src" PYTHON=python
+          python -m pip install -e '.[test,inprocess]'
+
+      - name: Test on the shared library
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          XCL_SRC: ${{ github.workspace }}/xcl-src
+          XCL_TRANSPORT: inprocess
+          XCL_TEST_STRICT: '1'
+          XCL_TEST_ENGINES: subprocess,inprocess
+        run: python -m pytest -q
+
+  # musl: the same suite inside Alpine, on both Linux architectures, on the
+  # engine program, which needs no C compiler to build. The checkouts happen
+  # on the runner and Alpine is started by hand, because GitHub cannot run
+  # its JavaScript actions in an Alpine job container on the arm64 runners.
   test-musl:
     name: alpine / ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -97,13 +127,20 @@ jobs:
           ref: ${{ steps.xcl.outputs.ref }}
           path: xcl-src
 
-      - name: Build the engine and test in Alpine
+      - name: Build the engine program and test in Alpine
         shell: bash
         run: |
-          docker run --rm -v "$PWD:/work" -w /work -e XCL_SRC=/work/xcl-src python:3-alpine sh -ec '
-            apk add --no-cache bash build-base git go make protobuf-dev curl tar
+          docker run --rm -v "$PWD:/work" -w /work -e XCL_SRC=/work/xcl-src -e GO_VERSION \
+            -e XCL_TEST_STRICT=1 -e XCL_TEST_ENGINES=subprocess python:3-alpine sh -ec '
+            apk add --no-cache bash git make protobuf-dev curl tar
+            # Go from its official archive: the go package of Alpine pulls in gcc,
+            # and nothing here needs a C compiler
+            case "$(uname -m)" in x86_64) goarch=amd64 ;; aarch64) goarch=arm64 ;; esac
+            curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" | tar -C /usr/local -xz
+            export PATH="/usr/local/go/bin:$PATH"
+            if command -v cc || command -v gcc; then echo "a C compiler is installed"; exit 1; fi
             git config --global --add safe.directory "*"
-            make protos libxcl plugins XCL_SRC=/work/xcl-src PYTHON=python
+            make protos engine plugins XCL_SRC=/work/xcl-src PYTHON=python
             python -m pip install --upgrade pip && python -m pip install -e ".[test]"
             python -m pytest -q'
 

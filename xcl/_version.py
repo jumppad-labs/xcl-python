@@ -5,4 +5,4 @@ engine is stamped with the tag, and the two are compared when the engine is
 first used.
 """
 
-__version__ = "0.4.0.dev0"
+__version__ = "0.5.0.dev0"

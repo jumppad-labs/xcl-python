@@ -1,11 +1,13 @@
-"""The transport: the only layer that touches the engine's C library.
+"""The transport: the only layer that knows how the engine is reached.
 
 A transport moves bytes: ``call`` passes a serialised CoreService request to
 the engine and returns the status and the serialised response, and
 ``release`` frees a configuration handle. Everything above it, the typed
 client and the public API, is written against this protocol, so tests run
-against a fake transport with no engine, and a later out-of-process
-transport is another class with the same two methods.
+against a fake transport with no engine. Two transports implement it:
+:class:`SubprocessTransport` runs the bundled engine program beside this
+process, the default, and :class:`InProcessTransport` loads the engine as a
+shared library from a source build.
 """
 
 from __future__ import annotations
@@ -26,5 +28,6 @@ class Transport(Protocol):
 
 
 from xcl._transport.inprocess import InProcessTransport  # noqa: E402
+from xcl._transport.subprocess import SubprocessTransport  # noqa: E402
 
-__all__ = ["Transport", "InProcessTransport"]
+__all__ = ["Transport", "InProcessTransport", "SubprocessTransport"]

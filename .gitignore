@@ -6,6 +6,7 @@ dist/
 __pycache__/
 .pytest_cache/
 
-# the engine built for the local platform by make libxcl, and release
-# archives downloaded for wheels
+# the engine built for the local platform by make engine and make libxcl,
+# and release archives downloaded for wheels
+xcl/_bin/
 xcl/_lib/

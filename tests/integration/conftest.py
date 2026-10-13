@@ -1,9 +1,10 @@
 """Fixtures for the integration tests, which drive the real engine.
 
-The engine is built into ``xcl/_lib`` by ``make libxcl``; the fixture
-plugins the tests load are built into ``build/plugins`` by ``make plugins``,
-which is run here once per session when they are missing and Go is
-installed.
+The engine is the one the run selects: the program built into ``xcl/_bin``
+by ``make engine``, or with ``XCL_TRANSPORT=inprocess`` the library built into
+``xcl/_lib`` by ``make libxcl``. The fixture plugins the tests load are built
+into ``build/plugins`` by ``make plugins``, which is run here once per session
+when they are missing and Go is installed.
 """
 
 import shutil
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from xcl._transport.inprocess import default_library_path
+from engines import selected_engine
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGINS = ROOT / "build" / "plugins"
@@ -21,11 +22,8 @@ XCL_SRC = ROOT.parent / "xcl"
 
 @pytest.fixture(scope="session")
 def engine() -> Path:
-    """The path of the built engine; skips when it has not been built."""
-    library = default_library_path()
-    if not library.exists():
-        pytest.skip(f"the xcl engine is not built at {library}; run make libxcl")
-    return library
+    """The path of the engine the run selects; skips, or fails in strict mode, when it has not been built."""
+    return selected_engine()
 
 
 @pytest.fixture(scope="session")
