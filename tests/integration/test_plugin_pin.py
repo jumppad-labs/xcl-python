@@ -1,8 +1,7 @@
 """Reading the pinned plugin release on the running interpreter.
 
-``tests/plugins.toml`` is read with ``tomllib``, or its ``tomli`` backport on
-CPython 3.10; this checks the reader works on whichever interpreter runs the
-suite, not what is pinned.
+``tests/plugins.toml`` is read with ``tomllib``; this checks the reader works
+on whichever interpreter runs the suite, not what is pinned.
 """
 
 from release_helpers import plugin_release

@@ -8,7 +8,7 @@ description = "XCL, the declarative configuration language, for Python: the xcl 
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{ name = "Jumppad Labs" }]
 keywords = ["xcl", "configuration", "hcl", "infrastructure"]
 classifiers = [
@@ -16,7 +16,6 @@ classifiers = [
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -36,10 +35,6 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "pytest>=8",
-  # tomli is the backport of tomllib for CPython 3.10, the only supported
-  # version without a standard TOML reader; the tests read their pinned plugin
-  # release with it there, and it is not installed where tomllib exists
-  "tomli>=2.0; python_version < '3.11'",
 ]
 # cffi is used only by the in-process route of a source build
 # (XCL_TRANSPORT=inprocess), which loads the shared library in ABI mode; the

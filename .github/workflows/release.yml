@@ -2,7 +2,7 @@
 # dispatches it with the tag once the signed engine archives are attached to
 # the xcl GitHub release; it can also be run by hand for a tag.
 #
-# For each of the eight platforms the workflow downloads the engine program's
+# For each of the seven platforms the workflow downloads the engine program's
 # archive, xcl-core_<version>_<os>_<arch>[_musl], the checksums and their
 # signature from the xcl release, verifies the signature against
 # keys/jumppad-labs.asc and the archive against the checksums, places the
@@ -61,7 +61,6 @@ jobs:
         target:
           - { platform: manylinux_2_28_x86_64,  asset: linux_amd64,      runner: ubuntu-latest,    exe: xcl-core }
           - { platform: manylinux_2_28_aarch64, asset: linux_arm64,      runner: ubuntu-24.04-arm, exe: xcl-core }
-          - { platform: macosx_11_0_x86_64,     asset: darwin_amd64,     runner: macos-15-intel,   exe: xcl-core }
           - { platform: macosx_11_0_arm64,      asset: darwin_arm64,     runner: macos-latest,     exe: xcl-core }
           - { platform: win_amd64,              asset: windows_amd64,    runner: windows-latest,   exe: xcl-core.exe }
           - { platform: win_arm64,              asset: windows_arm64,    runner: windows-11-arm,   exe: xcl-core.exe }
@@ -287,7 +286,6 @@ jobs:
         target:
           - { platform: manylinux_2_28_x86_64,  runner: ubuntu-latest }
           - { platform: manylinux_2_28_aarch64, runner: ubuntu-24.04-arm }
-          - { platform: macosx_11_0_x86_64,     runner: macos-15-intel }
           - { platform: macosx_11_0_arm64,      runner: macos-latest }
           - { platform: win_amd64,              runner: windows-latest }
           - { platform: win_arm64,              runner: windows-11-arm }

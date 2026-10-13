@@ -53,7 +53,7 @@ def recording_config(directory: Path, log: Path, value: str) -> Path:
         directory,
         f"""
         resource "recording" "one" {{
-          log = "{log}"
+          log = "{log.as_posix()}"
           value = "{value}"
         }}
         """,

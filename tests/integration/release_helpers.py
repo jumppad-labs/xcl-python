@@ -18,7 +18,6 @@ from __future__ import annotations
 import dataclasses
 import os
 import platform
-import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,12 +26,7 @@ import pytest
 import xcl
 import xcl_source
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    # CPython 3.10 has no standard TOML reader; tomli is its backport, with
-    # the same API, installed with the test extra only there
-    import tomli as tomllib
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / "tests"
