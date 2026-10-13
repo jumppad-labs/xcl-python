@@ -36,11 +36,12 @@ libxcl:
 	mkdir -p xcl/_lib
 	$(MAKE) -C "$(XCL_SRC)" libxcl LIBXCL_VERSION=v$(VERSION) LIBXCL_OUT="$(CURDIR)/xcl/_lib/libxcl.$(LIBXCL_EXT)"
 
-# plugins builds the fixture plugins the integration tests use into
-# build/plugins
+# plugins builds the fixture plugins the integration tests use, and the Go
+# parity program, into build/plugins, with the platform's executable suffix
+# (.exe on Windows, where the engine cannot start a program without one)
 plugins:
 	mkdir -p build/plugins
-	cd "$(XCL_SRC)/bindings/libxcl" && go build -o "$(CURDIR)/build/plugins/xcl-plugin-slow" ./testdata/plugins/slow && go build -o "$(CURDIR)/build/plugins/xcl-plugin-recording" ./testdata/plugins/recording && go build -o "$(CURDIR)/build/plugins/parity" ./cmd/parity
+	cd "$(XCL_SRC)/bindings/libxcl" && go build -o "$(CURDIR)/build/plugins/xcl-plugin-slow$(EXE)" ./testdata/plugins/slow && go build -o "$(CURDIR)/build/plugins/xcl-plugin-recording$(EXE)" ./testdata/plugins/recording && go build -o "$(CURDIR)/build/plugins/parity$(EXE)" ./cmd/parity
 
 # test runs the unit tests, which need no engine, and the integration tests,
 # which need make engine (or make libxcl with XCL_TRANSPORT=inprocess) and

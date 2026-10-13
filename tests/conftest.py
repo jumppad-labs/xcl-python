@@ -2,11 +2,14 @@
 
 Puts the package root on ``sys.path`` so ``import xcl`` resolves from a
 checkout without an install, and this directory so the test modules in
-``unit/`` and ``integration/`` can import ``fakes``.
+``unit/`` and ``integration/`` can import ``fakes``. The ``xcl_src`` fixture
+is the one place a test gets the xcl checkout from, see ``xcl_source``.
 """
 
 import sys
 from pathlib import Path
+
+import pytest
 
 _TESTS = Path(__file__).resolve().parent
 _ROOT = _TESTS.parent
@@ -14,6 +17,14 @@ _ROOT = _TESTS.parent
 for _path in (str(_ROOT), str(_TESTS)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
+
+
+@pytest.fixture(scope="session")
+def xcl_src() -> Path:
+    """The xcl checkout, ``XCL_SRC`` or the sibling ``xcl``; skips, or fails in strict mode, when it is missing."""
+    import xcl_source
+
+    return xcl_source.require("bindings/libxcl").parents[1]
 
 
 def pytest_configure(config):

@@ -2,7 +2,7 @@
 
 A fake GitHub release API runs on a local thread, answering the two routes
 the engine reads, the release by tag and each asset by id, from the real
-files of the Docker plugin release installed once per session. Serving the
+files of the test plugin release installed once per session. Serving the
 real files unaltered is the positive control; altering the checksums file,
 or trusting a key other than the release key, must be refused with
 :class:`xcl.PluginVerificationError` before the plugin is ever started.
@@ -20,26 +20,24 @@ from pathlib import Path
 import pytest
 
 import xcl
-from docker_helpers import (
-    CONTAINER_ADDRESS,
-    CONTAINER_IMAGE,
-    DOCKER_CONFIG,
-    NETWORK_ADDRESS,
-    NETWORK_SUBNET,
+from release_helpers import (
+    FIRST_ADDRESS,
+    RELEASE_SIGNING_KEY_ID,
+    TEST_PLUGIN_CONFIG,
     ReleaseFiles,
     github_registry,
     go_platform,
     installed_release,
     isolated_home,
+    log_variables,
     plugin_release,
     release_files,
-    require_docker,
     trusted_key,
 )
 
-__all__ = ["installed_release", "isolated_home", "require_docker"]
+__all__ = ["installed_release", "isolated_home"]
 
-pytestmark = pytest.mark.usefixtures("engine", "require_docker")
+pytestmark = pytest.mark.usefixtures("engine")
 
 
 class FakeGitHub:
@@ -191,9 +189,9 @@ def test_tampered_release_refused(tmp_path: Path, installed_release: ReleaseFile
     cache_dir = tmp_path / "cache"
     registry = github_registry(cache_dir, trusted_keys=[trusted_key()], api_url=fake.url)
 
-    with xcl.Config(registries=[registry], state_path=tmp_path / "state") as c:
+    with xcl.Config(registries=[registry], state_path=tmp_path / "state", variables=log_variables(tmp_path / "ops.jsonl")) as c:
         with pytest.raises(xcl.PluginVerificationError) as raised:
-            c.validate(DOCKER_CONFIG)
+            c.validate(TEST_PLUGIN_CONFIG)
 
     repository, version = plugin_release()
     goos, goarch = go_platform()
@@ -213,9 +211,9 @@ def test_untrusted_key_refused(tmp_path: Path, installed_release: ReleaseFiles, 
     cache_dir = tmp_path / "cache"
     registry = github_registry(cache_dir, trusted_keys=[other_key], api_url=fake.url)
 
-    with xcl.Config(registries=[registry], state_path=tmp_path / "state") as c:
+    with xcl.Config(registries=[registry], state_path=tmp_path / "state", variables=log_variables(tmp_path / "ops.jsonl")) as c:
         with pytest.raises(xcl.PluginVerificationError) as raised:
-            c.validate(DOCKER_CONFIG)
+            c.validate(TEST_PLUGIN_CONFIG)
 
     repository, version = plugin_release()
     assert raised.value.code == "plugin_verification"
@@ -233,8 +231,8 @@ def test_no_trusted_keys_installs_unsigned_release(tmp_path: Path, installed_rel
     cache_dir = tmp_path / "cache"
     registry = github_registry(cache_dir, trusted_keys=[], api_url=fake.url)
 
-    with xcl.Config(registries=[registry], state_path=tmp_path / "state") as c:
-        c.validate(DOCKER_CONFIG)
+    with xcl.Config(registries=[registry], state_path=tmp_path / "state", variables=log_variables(tmp_path / "ops.jsonl")) as c:
+        c.validate(TEST_PLUGIN_CONFIG)
 
     repository, version = plugin_release()
     installed = release_files(cache_dir, repository, version)
@@ -250,11 +248,10 @@ def test_fake_api_serves_valid_release_installs(tmp_path: Path, installed_releas
     cache_dir = tmp_path / "cache"
     registry = github_registry(cache_dir, trusted_keys=[trusted_key()], api_url=fake.url)
 
-    with xcl.Config(registries=[registry], state_path=tmp_path / "state") as c:
+    with xcl.Config(registries=[registry], state_path=tmp_path / "state", variables=log_variables(tmp_path / "ops.jsonl")) as c:
         try:
-            c.apply(DOCKER_CONFIG)
-            network = c.find(None, NETWORK_ADDRESS)
-            container = c.find(None, CONTAINER_ADDRESS)
+            c.apply(TEST_PLUGIN_CONFIG)
+            first = c.find(None, FIRST_ADDRESS)
         finally:
             c.destroy()
             remaining = c.entity_count()
@@ -265,7 +262,17 @@ def test_fake_api_serves_valid_release_installs(tmp_path: Path, installed_releas
     assert installed.signature.is_file()
     assert fake.requests[0] == f"/repos/{repository}/releases/tags/{version}"
     assert sorted(fake.requests[1:]) == sorted(fake.asset_url(i + 1).removeprefix(fake.url) for i in range(3))
-    assert isinstance(network, xcl.Entity)
-    assert network.subnet == NETWORK_SUBNET
-    assert container.image == CONTAINER_IMAGE
+    assert isinstance(first, xcl.Entity)
+    assert first.output == "first-one"
     assert remaining == 0
+
+
+def test_untrusted_key_refusal_names_signing_key(tmp_path: Path, installed_release: ReleaseFiles, fake_github, other_key: str):
+    fake = fake_github(real_assets(installed_release))
+    registry = github_registry(tmp_path / "cache", trusted_keys=[other_key], api_url=fake.url)
+
+    with xcl.Config(registries=[registry], state_path=tmp_path / "state", variables=log_variables(tmp_path / "ops.jsonl")) as c:
+        with pytest.raises(xcl.PluginVerificationError) as raised:
+            c.validate(TEST_PLUGIN_CONFIG)
+
+    assert f"signed by key {RELEASE_SIGNING_KEY_ID}, which is not trusted" in str(raised.value)

@@ -671,15 +671,8 @@ def test_encode_saved_variable_record_is_not_encodable(tmp_path):
 # -- threads and interruption ----------------------------------------------
 
 
-def test_sync_apply_does_not_stall_threads(tmp_path, slow_plugin):
-    config = write_config(
-        tmp_path,
-        """
-        resource "slow" "one" {
-          delay_ms = 1500
-        }
-        """,
-    )
+def count_ticks(during) -> tuple[int, float]:
+    """How often a thread sleeping 10ms at a time ticks while ``during()`` runs, and how long it ran for."""
     ticks = 0
     stop = threading.Event()
 
@@ -690,19 +683,41 @@ def test_sync_apply_does_not_stall_threads(tmp_path, slow_plugin):
             time.sleep(0.01)
 
     worker = threading.Thread(target=tick, daemon=True)
+    worker.start()
+    started_at = ticks
+    began = time.monotonic()
+    during()
+    elapsed = time.monotonic() - began
+    advanced = ticks - started_at
+    stop.set()
+    worker.join(timeout=5)
+    return advanced, elapsed
+
+
+def test_sync_apply_does_not_stall_threads(tmp_path, slow_plugin):
+    config = write_config(
+        tmp_path,
+        """
+        resource "slow" "one" {
+          delay_ms = 1500
+        }
+        """,
+    )
+
+    # the baseline is how often the thread ticks on this machine with nothing
+    # else running, for as long as the apply takes: a 10ms sleep is far longer
+    # on some runners (coarse timers on macOS), so a fixed count would judge
+    # the machine rather than the apply
+    baseline, _ = count_ticks(lambda: time.sleep(1.5))
     with xcl.Config(registries=[plugin_registry(slow_plugin)], state_path=tmp_path / "state") as c:
-        worker.start()
-        started_at = ticks
-        began = time.monotonic()
-        c.apply(config)
-        elapsed = time.monotonic() - began
-        advanced = ticks - started_at
-        stop.set()
-        worker.join(timeout=5)
+        advanced, elapsed = count_ticks(lambda: c.apply(config))
         done = c.find(None, "resource.slow.one").done
 
     assert elapsed >= 1.4
-    assert advanced >= 50, f"the counter thread ran only {advanced} times during a {elapsed:.2f}s apply"
+    assert advanced >= baseline * 0.25, (
+        f"the counter thread ran only {advanced} times during a {elapsed:.2f}s apply, "
+        f"against {baseline} times in 1.5s with nothing running"
+    )
     assert done is True
 
 
@@ -710,6 +725,10 @@ INTERRUPTED_APPLY = """
 import os, signal, time
 import xcl
 signal.signal(signal.SIGINT, signal.default_int_handler)
+# Windows cannot send SIGINT to another process: the test sends Ctrl-Break to
+# this process's own group instead, which raises KeyboardInterrupt the same way
+if hasattr(signal, "SIGBREAK"):
+    signal.signal(signal.SIGBREAK, signal.default_int_handler)
 registry = xcl.LocalRegistry()
 registry.register_external_plugin({plugin!r})
 with xcl.Config(registries=[registry], state_path={state!r}) as c:
@@ -734,12 +753,26 @@ def test_keyboard_interrupt_cancels_apply(tmp_path, slow_plugin):
     )
     state = tmp_path / "state"
     script = "import sys\n" + f"sys.path[:0] = [{str(ROOT)!r}]\n" + INTERRUPTED_APPLY.format(plugin=str(slow_plugin), state=str(state), config=str(config))
-    process = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # Windows delivers an interrupt to another process only as a console
+    # event to a whole process group, so the child gets a group of its own,
+    # which the engine program it starts joins; the engine discards the event
+    # and the child's KeyboardInterrupt drives the cancellation, as SIGINT
+    # does on Linux and macOS
+    windows = sys.platform == "win32"
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0
+    interrupt = signal.CTRL_BREAK_EVENT if windows else signal.SIGINT
+    process = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=creationflags,
+    )
 
     first = process.stdout.readline().strip()
     time.sleep(0.5)
     began = time.monotonic()
-    process.send_signal(signal.SIGINT)
+    process.send_signal(interrupt)
     try:
         stdout, stderr = process.communicate(timeout=8)
     except subprocess.TimeoutExpired:

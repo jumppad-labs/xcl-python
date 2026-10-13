@@ -9,12 +9,16 @@
 # suite a second time with XCL_TRANSPORT=inprocess.
 #
 # Every test run is strict: XCL_TEST_STRICT=1 fails a test whose engine is
-# missing when XCL_TEST_ENGINES lists that engine's route, so a job that
-# should have built an engine can never go green with its tests skipped.
+# missing when XCL_TEST_ENGINES lists that engine's route, and a test whose xcl
+# sources, fixture plugins or plugin release are missing, so a job that should
+# have had them can never go green with its tests skipped. pytest -rs lists
+# whatever does skip, the route and platform skips, in the log.
 #
-# The Docker plugin tests run where a Docker engine is reachable, the Linux
-# x86-64 runner; everywhere else they skip. musl is tested in Alpine
-# containers on the two Linux runners.
+# The end-to-end and GitHub registry tests install the signed release of the
+# test plugin, jumppad-labs/xcl-plugin-test, pinned in tests/plugins.toml, and
+# need no Docker engine; GITHUB_TOKEN keeps the jobs' release downloads inside
+# GitHub's API rate limit. musl is tested in Alpine containers on the two Linux
+# runners.
 
 name: CI
 
@@ -79,7 +83,8 @@ jobs:
           XCL_SRC: ${{ github.workspace }}/xcl-src
           XCL_TEST_STRICT: '1'
           XCL_TEST_ENGINES: subprocess
-        run: python -m pytest -q
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m pytest -q -rs
 
       # the in-process route: the shared library, which needs the runner's C
       # compiler, and cffi to load it
@@ -98,7 +103,8 @@ jobs:
           XCL_TRANSPORT: inprocess
           XCL_TEST_STRICT: '1'
           XCL_TEST_ENGINES: subprocess,inprocess
-        run: python -m pytest -q
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m pytest -q -rs
 
   # musl: the same suite inside Alpine, on both Linux architectures, on the
   # engine program, which needs no C compiler to build. The checkouts happen
@@ -127,12 +133,16 @@ jobs:
           ref: ${{ steps.xcl.outputs.ref }}
           path: xcl-src
 
+      # gnupg is installed for the registry tests, which generate a key the
+      # plugin release was not signed with
       - name: Build the engine program and test in Alpine
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           docker run --rm -v "$PWD:/work" -w /work -e XCL_SRC=/work/xcl-src -e GO_VERSION \
-            -e XCL_TEST_STRICT=1 -e XCL_TEST_ENGINES=subprocess python:3-alpine sh -ec '
-            apk add --no-cache bash git make protobuf-dev curl tar
+            -e XCL_TEST_STRICT=1 -e XCL_TEST_ENGINES=subprocess -e GITHUB_TOKEN python:3-alpine sh -ec '
+            apk add --no-cache bash git gnupg make protobuf-dev curl tar
             # Go from its official archive: the go package of Alpine pulls in gcc,
             # and nothing here needs a C compiler
             case "$(uname -m)" in x86_64) goarch=amd64 ;; aarch64) goarch=arm64 ;; esac
@@ -142,7 +152,7 @@ jobs:
             git config --global --add safe.directory "*"
             make protos engine plugins XCL_SRC=/work/xcl-src PYTHON=python
             python -m pip install --upgrade pip && python -m pip install -e ".[test]"
-            python -m pytest -q'
+            python -m pytest -q -rs'
 
   # the package metadata must be acceptable to PyPI
   check-package:

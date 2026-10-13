@@ -50,7 +50,8 @@ class FakeLauncher:
 
     The program arguments the transport passes are recorded and otherwise
     ignored; ``env``, when given, is the fake engine's whole environment on
-    top of this process's.
+    top of this process's. ``FAKE_LAUNCHER_PID`` tells the fake engine which
+    process started it, so it can tell when an interpreter stub sits between.
     """
 
     def __init__(self, env: dict[str, str] | None = None) -> None:
@@ -60,8 +61,7 @@ class FakeLauncher:
 
     def __call__(self, args: list[str], **kwargs) -> subprocess.Popen[bytes]:
         self.launches.append((list(args), dict(kwargs)))
-        if self.env is not None:
-            kwargs["env"] = {**os.environ, **self.env}
+        kwargs["env"] = {**os.environ, **(self.env or {}), "FAKE_LAUNCHER_PID": str(os.getpid())}
         process = subprocess.Popen([sys.executable, str(FAKE_ENGINE)], **kwargs)
         self.processes.append(process)
         return process
