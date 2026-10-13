@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+import xcl_source
 from xcl._transport.inprocess import library_filename
 from xcl._transport.subprocess import program_filename
 from xcl._version import __version__
@@ -668,11 +669,6 @@ def test_forked_child_parent_configuration_raises_fork_error(tmp_path):
 # -- what the package finds -------------------------------------------------
 
 
-def xcl_source() -> Path:
-    """The xcl checkout to build an engine from: ``XCL_SRC``, or the sibling directory."""
-    return Path(os.environ.get("XCL_SRC") or ROOT.parent / "xcl")
-
-
 VERSION_REFUSED = """
 import xcl
 print("package:%s" % xcl.__file__, flush=True)
@@ -685,12 +681,10 @@ except xcl.EngineVersionError as error:
 """
 
 
-def test_engine_of_other_version_refused(tmp_path):
-    source = xcl_source()
+def test_engine_of_other_version_refused(tmp_path, xcl_src):
+    source = xcl_src
     if shutil.which("go") is None:
-        pytest.skip("go is not on PATH to build an engine of another version")
-    if not (source / "Makefile").is_file():
-        pytest.skip(f"the xcl checkout is not at {source}; set XCL_SRC")
+        xcl_source.skip("go is not on PATH to build an engine of another version")
     packages = tmp_path / "packages"
     copy = copy_package(packages, without=("_bin", "_lib"))
     program = copy / "_bin" / program_filename()

@@ -10,11 +10,6 @@ import pytest
 from xcl import Computed, Resource, SchemaError, Sensitive, entity, field
 from xcl._schema import schema_for
 
-PARITY_TYPES = (
-    Path(__file__).resolve().parents[3] / "xcl" / "bindings" / "libxcl" / "testdata" / "parity" / "annotations" / "types.json"
-)
-
-
 @dataclass
 class Health:
     path: str
@@ -51,8 +46,9 @@ def _only_field(cls: type) -> dict[str, Any]:
     return fields[0]
 
 
-def test_annotations_dataclass_matches_parity_fixture():
-    documents = json.loads(PARITY_TYPES.read_text())
+def test_annotations_dataclass_matches_parity_fixture(xcl_src: Path):
+    parity_types = xcl_src / "bindings" / "libxcl" / "testdata" / "parity" / "annotations" / "types.json"
+    documents = json.loads(parity_types.read_text())
 
     assert schema_for(App) == documents[0]
 

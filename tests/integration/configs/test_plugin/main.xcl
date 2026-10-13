@@ -1,0 +1,19 @@
+# Two items of the test plugin, jumppad-labs/xcl-plugin-test, which record
+# every operation to the log the tests pass in. second takes first's computed
+# output as its input, so it is created after first and destroyed before it.
+# The tests always set log; the default only lets the file validate alone.
+variable "log" {
+  default = "ops.jsonl"
+}
+
+test "item" "first" {
+  log    = variable.log
+  value  = "one"
+  secret = "hunter2"
+}
+
+test "item" "second" {
+  log   = variable.log
+  value = "two"
+  input = test.item.first.output
+}

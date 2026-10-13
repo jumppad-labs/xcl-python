@@ -264,6 +264,27 @@ protoc, `make engine` builds the engine program into `xcl/_bin` with Go and no
 C compiler, `make plugins` builds the fixture plugins the integration tests
 use, and `make test` runs the suite.
 
+The tests find the xcl sources the same way: `XCL_SRC` when it is set, else a
+sibling `../xcl` checkout. To run the suite against xcl checked out anywhere
+else, point `XCL_SRC` at it, for example
+`XCL_SRC=$HOME/src/xcl make plugins test`. With neither, the tests that need
+the sources (the schema and parity tests, and building the fixture plugins)
+skip with a message telling you to set `XCL_SRC`.
+
+The end-to-end and GitHub registry tests need network access but no Docker.
+They install the signed release of a plugin made only for testing,
+[jumppad-labs/xcl-plugin-test](https://github.com/jumppad-labs/xcl-plugin-test),
+pinned in `tests/plugins.toml`, from GitHub once per run, verified against the
+jumppad-labs release key in `tests/keys`; set `GITHUB_TOKEN` if you run them
+often, to stay inside GitHub's API rate limit. The Docker plugin in Getting
+started remains the example to follow for your own configuration.
+
+CI runs the suite with `XCL_TEST_STRICT=1`, which turns a skip for something
+the run should have into a failure: the xcl sources, the fixture plugins, the
+plugin release, and the engine for each route `XCL_TEST_ENGINES` lists
+(`subprocess`, or `subprocess,inprocess`). Skips for a route the run did not
+select, and for a platform without a feature such as `fork`, stay skips.
+
 The engine can also be built as a shared library and loaded into the Python
 process instead, which keeps the in-process route tested: `make libxcl`
 builds it into `xcl/_lib` with Go and a C compiler, `pip install -e

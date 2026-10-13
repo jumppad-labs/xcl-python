@@ -18,7 +18,12 @@ Methods it understands:
 - ``Status`` (test only): the payload is an ascii integer, answered as the
   status.
 - ``Exit``: exits at once with the ascii integer code in the payload.
-- ``Kill``: sends itself SIGKILL (exit 137 where there is no SIGKILL).
+- ``Kill``: sends itself SIGKILL (exit 137 where there is no SIGKILL). When
+  ``FAKE_LAUNCHER_PID`` names a process other than its parent, the
+  interpreter was started through a stub that waits for it and reports a
+  signal as status 128+n, as a shell does (macOS framework builds can), so the
+  stub is sent SIGKILL first: the process the transport started then ends by
+  the signal, as the engine program would.
 
 Any other method answers status -1. When ``FAKE_STDERR`` is set, its value is
 written to standard error as a line at start up. The program exits 0 when its
@@ -119,6 +124,10 @@ def handle_request(request) -> None:
 
     if method == "Kill":
         if hasattr(signal, "SIGKILL"):
+            launcher = os.environ.get("FAKE_LAUNCHER_PID")
+            parent = os.getppid()
+            if launcher and parent != int(launcher) and parent > 1:
+                os.kill(parent, signal.SIGKILL)
             os.kill(os.getpid(), signal.SIGKILL)
         os._exit(137)
 
