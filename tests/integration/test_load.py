@@ -1,4 +1,4 @@
-"""Driving the real engine bundled in xcl/_lib."""
+"""Driving the real engine the run selects: the program in xcl/_bin, or the library in xcl/_lib."""
 
 import subprocess
 import sys
@@ -9,16 +9,12 @@ import pytest
 import xcl
 from xcl._client import default_client, normalise_version
 from xcl._core import core_pb2
-from xcl._transport.inprocess import default_library_path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-LIBRARY = default_library_path()
-
-needs_engine = pytest.mark.skipif(
-    not LIBRARY.exists(),
-    reason=f"the xcl engine is not built at {LIBRARY}; run make libxcl",
-)
+# every test here drives the engine the run selects, which the engine fixture
+# skips without, or fails without in strict mode
+needs_engine = pytest.mark.usefixtures("engine")
 
 # the ctypes fallback is exercised in a fresh interpreter: cffi is blocked
 # before xcl is imported, so load_library has to fall back, and the process
@@ -70,6 +66,7 @@ def test_lookup_error_from_engine_is_typed():
 
 
 @needs_engine
+@pytest.mark.inprocess_only
 def test_ctypes_fallback_drives_engine():
     result = subprocess.run(
         [sys.executable, "-c", CTYPES_FALLBACK],

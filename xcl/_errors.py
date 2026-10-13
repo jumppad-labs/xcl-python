@@ -7,15 +7,18 @@ registered for its code, so a program catches ``xcl.NotFoundError`` rather
 than inspecting a code; an unknown code raises the base :class:`Error`, so it
 is still catchable.
 
-Three errors are raised by the binding itself, never by the engine:
-:class:`ForkedProcessError`, :class:`EngineVersionError` and
+Five errors are raised by the binding itself, never by the engine:
+:class:`ForkedProcessError`, :class:`EngineVersionError`,
+:class:`EngineNotFoundError`, :class:`EngineExitedError` and
 :class:`InternalBindingError`.
 """
 
 from __future__ import annotations
 
+import signal
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from os import PathLike
 from typing import Any
 
 
@@ -254,12 +257,16 @@ class InternalError(Error):
 
 
 class ForkedProcessError(Error):
-    """XCL was used in a process forked after the parent had used it.
+    """A configuration was used in a process forked after the parent had used xcl.
 
-    The engine is a Go runtime, which cannot be forked. Either start worker
-    processes with the ``spawn`` start method, or create the configuration
-    after the fork (in gunicorn's ``post_fork`` hook, or celery's
-    ``worker_process_init`` signal) so each child loads its own engine.
+    With the bundled engine program, the default, the configuration's engine
+    belongs to the parent: a child creates its own configuration after the
+    fork, which starts the child's own engine. With the shared library
+    (``XCL_TRANSPORT=inprocess``) the engine is a Go runtime, which cannot be
+    forked: start worker processes with the ``spawn`` start method, or create
+    the configuration after the fork (in gunicorn's ``post_fork`` hook, or
+    celery's ``worker_process_init`` signal) so each child loads its own
+    engine.
     """
 
     code = "forked_process"
@@ -286,6 +293,72 @@ class EngineVersionError(Error):
         super().__init__(message, details={"package": package, "engine": engine})
         self.package = package
         self.engine = engine
+
+
+class EngineNotFoundError(Error):
+    """The engine this package was asked to run is not where it should be.
+
+    Every wheel bundles the engine program, ``xcl/_bin/xcl-core``, and runs
+    it by default; a source build can also build the shared library,
+    ``xcl/_lib/libxcl.*``, which ``XCL_TRANSPORT=inprocess`` selects.
+    ``details`` names both expected locations as ``program`` and ``library``,
+    and the route that was selected as ``transport``.
+    """
+
+    code = "engine_not_found"
+
+    def __init__(self, *, program: str | PathLike[str], library: str | PathLike[str], transport: str) -> None:
+        wanted = "engine program" if transport == "subprocess" else "shared library"
+        super().__init__(
+            f"the xcl {wanted} for the {transport} route was not found. "
+            f"The engine program is expected at {program}: every xcl-lang wheel bundles it, "
+            "and a source checkout builds it with make engine. "
+            f"The shared library is expected at {library}: a source checkout builds it with make libxcl, "
+            "and XCL_TRANSPORT=inprocess selects it.",
+            details={"program": str(program), "library": str(library), "transport": transport},
+        )
+        self.program = str(program)
+        self.library = str(library)
+        self.transport = transport
+
+
+class EngineExitedError(Error):
+    """The engine program exited while this package was using it.
+
+    Every call waiting on the engine raises it, carrying the exit status, or
+    on Linux and macOS the signal that ended the engine; ``returncode`` is the
+    status as :class:`subprocess.Popen` reports it, negative for a signal.
+    The host process carries on: the next use starts a fresh engine, and a
+    configuration created before the exit raises this error again, since the
+    engine that held it is gone.
+    """
+
+    code = "engine_exited"
+
+    def __init__(self, returncode: int | None) -> None:
+        details: dict[str, str] = {}
+        if returncode is None:
+            how = "its pipe closed"
+        elif returncode < 0:
+            name = _signal_name(-returncode)
+            how = f"it was ended by signal {name}"
+            details["signal"] = name
+        else:
+            how = f"it exited with status {returncode}"
+            details["status"] = str(returncode)
+        super().__init__(
+            f"the xcl engine stopped unexpectedly: {how}. Configurations created before it stopped are gone; "
+            "the next configuration starts a new engine",
+            details=details,
+        )
+        self.returncode = returncode
+
+
+def _signal_name(number: int) -> str:
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return str(number)
 
 
 class InternalBindingError(Error):

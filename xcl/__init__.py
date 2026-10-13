@@ -1,17 +1,20 @@
 """XCL, the declarative configuration language, for Python.
 
 The package, published as ``xcl-lang`` and imported as ``xcl``, drives the xcl
-engine, a Go shared library bundled in the wheel,
-so a Python program validates, diffs, applies, loads and destroys
-configuration exactly as a Go program does, uses the same Go plugins, and
-adds its own Python functions to configuration. ``import xcl`` loads nothing:
-the engine is loaded the first time a configuration is created.
+engine, a small program bundled in the wheel and run as a subprocess, the same
+way on every platform, so a Python program validates, diffs, applies, loads and
+destroys configuration exactly as a Go program does, uses the same Go plugins,
+and adds its own Python functions to configuration. ``import xcl`` starts
+nothing: the engine starts the first time a configuration is created, is
+shared by every configuration, and stops when the last one is closed.
 """
 
 from xcl._errors import (
     CancelledError,
     ConfigError,
     EmptyConfigurationError,
+    EngineExitedError,
+    EngineNotFoundError,
     EngineVersionError,
     Error,
     ForkedProcessError,
@@ -105,6 +108,8 @@ __all__ = [
     "InternalError",
     "ForkedProcessError",
     "EngineVersionError",
+    "EngineNotFoundError",
+    "EngineExitedError",
     "InternalBindingError",
     "engine_version",
 ]

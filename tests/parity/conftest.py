@@ -3,7 +3,8 @@
 The Go program and the fixture plugins are built into ``build/plugins`` by
 ``make plugins`` from the xcl checkout, ``XCL_SRC`` in the environment or the
 sibling ``xcl`` directory by default; the Python program is
-``tests/parity/run_python.py`` and needs the engine built by ``make libxcl``.
+``tests/parity/run_python.py`` and needs the engine the run selects, built
+by ``make engine``, or by ``make libxcl`` with ``XCL_TRANSPORT=inprocess``.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any, Callable
 
 import pytest
 
-from xcl._transport.inprocess import default_library_path
+from engines import selected_engine
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGINS = ROOT / "build" / "plugins"
@@ -39,11 +40,8 @@ def xcl_src() -> Path:
 
 @pytest.fixture(scope="session")
 def engine() -> Path:
-    """The path of the built engine; skips when it has not been built."""
-    library = default_library_path()
-    if not library.exists():
-        pytest.skip(f"the xcl engine is not built at {library}; run make libxcl")
-    return library
+    """The path of the engine the run selects; skips, or fails in strict mode, when it has not been built."""
+    return selected_engine()
 
 
 @pytest.fixture(scope="session")

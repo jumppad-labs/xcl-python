@@ -1,8 +1,9 @@
 """Build hook that tags a wheel for the platform whose engine it bundles.
 
-The package has no compiled extension of its own: it loads the engine, a Go
-shared library, through cffi in ABI mode. One wheel therefore serves every
-CPython version on a platform, and is tagged ``py3-none-<platform>``, with the
+The package has no compiled extension of its own: it bundles the engine, a
+static program in ``xcl/_bin``, and runs it as a subprocess. One wheel
+therefore serves every CPython version on a platform, and is tagged
+``py3-none-<platform>``, with the
 platform tag given through ``XCL_WHEEL_PLATFORM`` (for example
 ``manylinux_2_28_x86_64`` or ``macosx_11_0_arm64``). Without it the wheel is
 tagged for the machine building it, through hatchling's inference, which is

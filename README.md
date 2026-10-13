@@ -1,10 +1,12 @@
 # xcl for Python
 
 XCL, the declarative configuration language, for Python. The package drives
-the same engine Go programs use, built as a shared library and bundled in the
-wheel, so a Python program validates, diffs, applies, loads and destroys
-configuration exactly as a Go program does, uses the same Go plugins, and
-adds its own Python functions to configuration.
+the same engine Go programs use, bundled in the wheel as a small program that
+the package runs as a subprocess, the same way on every platform, Alpine
+included, with the same API and the same results everywhere. A Python program
+validates, diffs, applies, loads and destroys configuration exactly as a Go
+program does, uses the same Go plugins, and adds its own Python functions to
+configuration.
 
 - Engine and Go library: [github.com/jumppad-labs/xcl](https://github.com/jumppad-labs/xcl)
 - Language and documentation: [xcl.dev](https://xcl.dev)
@@ -15,15 +17,24 @@ adds its own Python functions to configuration.
 pip install xcl-lang
 ```
 
-The distribution is `xcl-lang` on PyPI and is imported as `xcl`. No Go toolchain and no C compiler are needed: each wheel bundles the engine
-for its platform. Wheels are published for
+The distribution is `xcl-lang` on PyPI and is imported as `xcl`. No Go
+toolchain and no C compiler are needed: each wheel bundles the engine
+program, `xcl-core`, for its platform, and contains no compiled extension,
+so one wheel per platform serves every CPython 3.10 and later. Wheels are
+published for
 
-- Linux x86-64 and arm64, glibc 2.28 or later (`manylinux_2_28`) and musl (`musllinux_1_2`);
+- Linux x86-64 and arm64 on glibc 2.28 or later (`manylinux_2_28`);
+- Linux x86-64 and arm64 on musl (`musllinux_1_2`), Alpine included;
 - macOS 11 or later, x86-64 and arm64;
-- Windows x86-64 and arm64;
+- Windows x86-64 and arm64.
 
-for CPython 3.10 and later. The package version is the xcl release it
-bundles, and it refuses to run against any other engine.
+The engine runs as a subprocess on every platform. `import xcl` starts
+nothing: the engine starts the first time a configuration is used, is shared
+by every configuration in the process, and stops on its own when the last
+configuration is closed or the interpreter exits. It never outlives its
+host, even one that is killed, and its diagnostics go to your standard
+error. The package version is the xcl release it bundles, and it refuses to
+run against any other engine.
 
 ## Getting started
 
@@ -226,23 +237,44 @@ with its file, line and column), `xcl.PluginVerificationError`,
 `xcl.FunctionNameClashError`, `xcl.CancelledError` and so on. A plugin
 release whose signature does not verify against the trusted keys is refused.
 
+Two errors concern the engine itself. `xcl.EngineNotFoundError` is raised on
+first use when the installed package does not hold its engine, and names
+where the engine program and the shared library were expected.
+`xcl.EngineExitedError` is raised by every call waiting on the engine if it
+exits unexpectedly, carrying its exit status, or the signal that ended it, in
+`details` and `returncode`. Your program carries on: the next configuration
+starts a new engine, and a configuration created before the exit raises
+`xcl.EngineExitedError` again.
+
 ## Forking
 
-The engine is a Go runtime, which cannot survive `fork()`. `import xcl`
-loads nothing, so a process that imports the package and forks before using
-it is unaffected. A process that used the package and then forks, as
-gunicorn's prefork or `multiprocessing` with the `fork` start method do, gets
-`xcl.ForkedProcessError` in the child. Two ways out: use the `spawn` start
-method (`multiprocessing.set_start_method("spawn")`), or create the
-configuration after the fork, in gunicorn's `post_fork` hook or celery's
-`worker_process_init` signal, so each child loads its own engine.
+A forked child creates its own configuration. `import xcl` starts nothing,
+so forking before using the package is unaffected, and a child forked after
+the parent used it simply creates a new `xcl.Config`, which starts the
+child's own engine. Using a configuration created before the fork raises
+`xcl.ForkedProcessError` in the child, since its engine belongs to the
+parent. With that one rule, gunicorn's `preload_app`, celery's prefork pool
+and `multiprocessing` with the `fork` start method all work.
 
 ## Development
 
-The package is built against a checkout of xcl: `make protos` generates the
-message classes from its `proto/` with protoc, `make libxcl` builds the
-engine into `xcl/_lib` with Go and a C compiler, `make plugins` builds the
-fixture plugins the integration tests use, and `make test` runs the suite.
+The package is built against a checkout of xcl, `XCL_SRC` (by default
+`../xcl`): `make protos` generates the message classes from its `proto/` with
+protoc, `make engine` builds the engine program into `xcl/_bin` with Go and no
+C compiler, `make plugins` builds the fixture plugins the integration tests
+use, and `make test` runs the suite.
+
+The engine can also be built as a shared library and loaded into the Python
+process instead, which keeps the in-process route tested: `make libxcl`
+builds it into `xcl/_lib` with Go and a C compiler, `pip install -e
+'.[test,inprocess]'` adds cffi to load it (the standard library's ctypes is
+used without it), and `XCL_TRANSPORT=inprocess` selects it. Without the
+variable the engine program runs even when the library is present, and a
+missing engine is reported, never replaced by the other form. With the
+in-process route the forking rule is stricter, since the engine is a Go
+runtime in the process: use the `spawn` start method, or create the
+configuration after the fork, in gunicorn's `post_fork` hook or celery's
+`worker_process_init` signal.
 `PARITY.md` lists every Go operation and lookup with its Python equivalent. The distribution is published as `xcl-lang`, since the name `xcl` on PyPI belongs to another project; the import name is `xcl`.
 
 ## Licence

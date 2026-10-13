@@ -1,5 +1,10 @@
 """The in-process transport: libxcl loaded into this process.
 
+This route is for a source build only: no wheel carries the shared library.
+``make libxcl`` builds it into ``xcl/_lib``, and ``XCL_TRANSPORT=inprocess``
+selects it; the default is the bundled engine program, see
+:mod:`xcl._transport.subprocess`.
+
 The library is loaded on first use, never at import, because loading a Go
 shared library starts the Go runtime and its threads, and a process that
 imported xcl and then forks (gunicorn, celery's prefork pool, multiprocessing

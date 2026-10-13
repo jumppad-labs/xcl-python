@@ -97,12 +97,18 @@ _default_lock = threading.Lock()
 
 
 def default_client() -> Client:
-    """The client every configuration uses unless given another: the bundled engine, loaded lazily."""
+    """The client every configuration uses unless given another.
+
+    Its transport is chosen on first use by
+    :func:`xcl._transport.select.select_transport`: the bundled engine
+    program, or the shared library when ``XCL_TRANSPORT=inprocess``. Nothing
+    is started until a call is made.
+    """
     global _default_client
     if _default_client is None:
         with _default_lock:
             if _default_client is None:
-                from xcl._transport import InProcessTransport
+                from xcl._transport.select import select_transport
 
-                _default_client = Client(InProcessTransport())
+                _default_client = Client(select_transport())
     return _default_client
