@@ -179,12 +179,20 @@ class MaskNotReversibleError(Error):
 
 @dataclass(frozen=True)
 class Problem:
-    """One problem in configuration, positioned where it was found."""
+    """One problem in configuration, positioned where it was found.
+
+    ``message`` says what is wrong and why. ``detail`` is the why on its own,
+    and ``entity`` and ``field`` name the block and the field within it the
+    problem is in, when the engine knows them.
+    """
 
     file: str
     line: int
     column: int
     message: str
+    detail: str = ""
+    entity: str = ""
+    field: str = ""
 
     def __str__(self) -> str:
         where = self.file
@@ -206,24 +214,28 @@ class ConfigError(Error):
         found = []
         for cause in self.causes:
             if cause.code in ("config", "provider") and "file" in cause.details:
-                found.append(
-                    Problem(
-                        file=cause.details.get("file", ""),
-                        line=_int(cause.details.get("line")),
-                        column=_int(cause.details.get("column")),
-                        message=cause.details.get("summary") or cause.message,
-                    )
-                )
+                found.append(_problem(cause))
         if not found and "file" in self.details:
-            found.append(
-                Problem(
-                    file=self.details.get("file", ""),
-                    line=_int(self.details.get("line")),
-                    column=_int(self.details.get("column")),
-                    message=self.details.get("summary") or self.message,
-                )
-            )
+            found.append(_problem(self))
         return found
+
+
+def _problem(error: Error) -> Problem:
+    """The problem an error describes from its details: a diagnostic's summary
+    and detail together, as its message is written, or an older positioned
+    error's summary."""
+    details = error.details
+    summary = details.get("summary") or error.message
+    detail = details.get("detail", "")
+    return Problem(
+        file=details.get("file", ""),
+        line=_int(details.get("line")),
+        column=_int(details.get("column")),
+        message=f"{summary}; {detail}" if detail else summary,
+        detail=detail,
+        entity=details.get("entity", ""),
+        field=details.get("field", ""),
+    )
 
 
 class ProviderError(Error):

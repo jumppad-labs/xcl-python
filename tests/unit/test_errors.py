@@ -65,6 +65,43 @@ def test_config_code_raises_config_error_with_problems():
     assert str(error.problems[0]) == "main.hcl:3:9: unknown attribute"
 
 
+def test_config_error_problem_from_a_diagnostic_holds_its_detail_block_and_field():
+    error = from_proto(
+        core_pb2.Error(
+            code="config",
+            message="configuration is invalid",
+            causes=[
+                core_pb2.Error(
+                    code="config",
+                    message='main.xcl:2,3-8: Unsupported argument; An argument named "modls" is not expected here.',
+                    details={
+                        "severity": "error",
+                        "summary": "Unsupported argument",
+                        "detail": 'An argument named "modls" is not expected here.',
+                        "entity": "agent.claude",
+                        "field": "modls",
+                        "file": "main.xcl",
+                        "line": "2",
+                        "column": "3",
+                    },
+                ),
+            ],
+        )
+    )
+
+    assert error.problems == [
+        xcl.Problem(
+            file="main.xcl",
+            line=2,
+            column=3,
+            message='Unsupported argument; An argument named "modls" is not expected here.',
+            detail='An argument named "modls" is not expected here.',
+            entity="agent.claude",
+            field="modls",
+        ),
+    ]
+
+
 def test_provider_code_raises_provider_error():
     error = from_proto(
         core_pb2.Error(
