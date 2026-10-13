@@ -129,6 +129,10 @@ def handle_request(request) -> None:
             if launcher and parent != int(launcher) and parent > 1:
                 os.kill(parent, signal.SIGKILL)
             os.kill(os.getpid(), signal.SIGKILL)
+            # kill can return before the signal ends a multithreaded process,
+            # as it can on macOS, so wait for it rather than exit with 137
+            while True:
+                time.sleep(1)
         os._exit(137)
 
     respond(request.id, STATUS_UNKNOWN_METHOD, b"")

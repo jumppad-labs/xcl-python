@@ -421,13 +421,13 @@ def test_cancel_apply_starts_no_operation_after_cancel(tmp_path, recording_plugi
         tmp_path,
         f"""
         resource "recording" "first" {{
-          log = "{log}"
+          log = "{log.as_posix()}"
           delay_ms = 1500
           value = "a"
         }}
 
         resource "recording" "second" {{
-          log = "{log}"
+          log = "{log.as_posix()}"
           value = "b"
           input = resource.recording.first.output
         }}
@@ -513,7 +513,7 @@ def test_diff_and_destroy_awaitable(tmp_path, recording_plugin):
             tmp_path,
             f"""
             resource "recording" "one" {{
-              log = "{log}"
+              log = "{log.as_posix()}"
               value = "{value}"
             }}
             """,
