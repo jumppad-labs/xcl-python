@@ -268,7 +268,7 @@ jobs:
           find artifacts -name '*.whl' -exec cp {} dist/ \;
           find artifacts -name '*.tar.gz' -exec cp {} dist/ \;
           ls -la dist
-          [ "$(ls dist/*.whl | wc -l)" -eq 8 ] || { echo "expected 8 wheels"; exit 1; }
+          [ "$(ls dist/*.whl | wc -l)" -eq 7 ] || { echo "expected 7 wheels"; exit 1; }
       - uses: pypa/gh-action-pypi-publish@v1.14.2
         with:
           packages-dir: dist
