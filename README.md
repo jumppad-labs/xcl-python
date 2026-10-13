@@ -235,7 +235,9 @@ work: no further provider call starts, the progress made is saved, and
 Every failure is an exception under `xcl.Error`, one class per kind of
 error, carrying `message`, `details` and `causes`: `xcl.NotFoundError`,
 `xcl.NotUniqueError`, `xcl.ConfigError` (whose `problems` list each problem
-with its file, line and column), `xcl.PluginVerificationError`,
+with its file, line and column, a `message` saying what is wrong and why, and,
+from an engine that reports them, its `detail` on its own and the `entity` and
+`field` it is in), `xcl.PluginVerificationError`,
 `xcl.FunctionNameClashError`, `xcl.CancelledError` and so on. A plugin
 release whose signature does not verify against the trusted keys is refused.
 
