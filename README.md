@@ -10,6 +10,8 @@ configuration.
 
 - Engine and Go library: [github.com/jumppad-labs/xcl](https://github.com/jumppad-labs/xcl)
 - Language and documentation: [xcl.dev](https://xcl.dev)
+- Python API reference: [xcl.dev/api/python](https://xcl.dev/api/python/)
+- Getting started guide: [Using XCL with Python](https://xcl.dev/using-xcl-with-python/)
 
 ## Install
 
