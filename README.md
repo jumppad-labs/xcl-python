@@ -22,12 +22,12 @@ pip install xcl-lang
 The distribution is `xcl-lang` on PyPI and is imported as `xcl`. No Go
 toolchain and no C compiler are needed: each wheel bundles the engine
 program, `xcl-core`, for its platform, and contains no compiled extension,
-so one wheel per platform serves every CPython 3.10 and later. Wheels are
+so one wheel per platform serves every CPython 3.11 and later. Wheels are
 published for
 
 - Linux x86-64 and arm64 on glibc 2.28 or later (`manylinux_2_28`);
 - Linux x86-64 and arm64 on musl (`musllinux_1_2`), Alpine included;
-- macOS 11 or later, x86-64 and arm64;
+- macOS 11 or later on Apple silicon (arm64);
 - Windows x86-64 and arm64.
 
 The engine runs as a subprocess on every platform. `import xcl` starts
