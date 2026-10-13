@@ -57,13 +57,13 @@ Go plugin's entities are read.
 | Go | Python |
 |---|---|
 | `registry.NewLocal(registry.PluginPattern(p))` | `xcl.LocalRegistry(plugin_pattern=p)` |
-| `local.RegisterType(prototype, name...)` | `local.register_type(cls)` with `@xcl.entity(type, subtype)` |
+| `registry.Register[T](local, name...)`, `local.RegisterType(prototype, name...)` | `local.register_type(cls)` with `@xcl.entity(type, subtype)` |
 | `local.RegisterFunction(name, fn)` | `local.register_function(fn, name=None)` |
 | `local.RegisterExternalPlugin(path)` | `local.register_external_plugin(path)` |
 | `local.RegisterPluginDirectory(dir)` | `local.register_plugin_directory(dir)` |
 | `registry.NewGitHub(options...)` | `xcl.GitHubRegistry(cache_dir=, trusted_keys=, token=, api_url=)` |
 | `github.RegisterPlugin(repo, version)` | `github.register_plugin(repo, version)` |
-| `github.RegisterType(prototype, name...)` | `github.register_type(cls)` |
+| `registry.Register[T](github, name...)`, `github.RegisterType(prototype, name...)` | `github.register_type(cls)` |
 
 ## Not applicable
 
