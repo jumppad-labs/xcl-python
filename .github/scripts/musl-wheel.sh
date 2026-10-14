@@ -1,8 +1,9 @@
 #!/bin/sh
 # Builds and tests one musl wheel inside python:3-alpine, run by the
-# wheels-musl job of release.yml with TAG, VERSION, GH_TOKEN,
-# XCL_WHEEL_PLATFORM, ASSET, XCL_SRC and GO_VERSION set and the checkout
-# mounted at /work.
+# wheels-musl job of release.yml with TAG, VERSION, ENGINE, ENGINE_VERSION,
+# GH_TOKEN, XCL_WHEEL_PLATFORM, ASSET, XCL_SRC and GO_VERSION set and the
+# checkout mounted at /work. TAG and VERSION are the package's, ENGINE and
+# ENGINE_VERSION the xcl engine pinned in xcl-ref.txt.
 set -eu
 
 # no C compiler: the engine program comes from the release, and Go builds the
@@ -14,32 +15,33 @@ curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" | tar -C /
 export PATH="/usr/local/go/bin:$PATH"
 git config --global --add safe.directory '*'
 
-# download and verify the engine program's archive
-archive="xcl-core_${VERSION}_${ASSET}.tar.gz"
+# download and verify the pinned engine program's archive
+archive="xcl-core_${ENGINE_VERSION}_${ASSET}.tar.gz"
 mkdir -p engine && cd engine
-gh release download "$TAG" --repo jumppad-labs/xcl \
+gh release download "$ENGINE" --repo jumppad-labs/xcl \
   --pattern "$archive" \
-  --pattern "xcl-core_${VERSION}_checksums.txt" \
-  --pattern "xcl-core_${VERSION}_checksums.txt.sig"
+  --pattern "xcl-core_${ENGINE_VERSION}_checksums.txt" \
+  --pattern "xcl-core_${ENGINE_VERSION}_checksums.txt.sig"
 gpg --batch --import ../tests/keys/jumppad-labs.asc
-gpg --batch --verify "xcl-core_${VERSION}_checksums.txt.sig" "xcl-core_${VERSION}_checksums.txt"
-grep " $archive\$" "xcl-core_${VERSION}_checksums.txt" | sha256sum -c -
+gpg --batch --verify "xcl-core_${ENGINE_VERSION}_checksums.txt.sig" "xcl-core_${ENGINE_VERSION}_checksums.txt"
+grep " $archive\$" "xcl-core_${ENGINE_VERSION}_checksums.txt" | sha256sum -c -
 tar -xzf "$archive"
 mkdir -p ../xcl/_bin
 cp xcl-core ../xcl/_bin/
 chmod +x ../xcl/_bin/xcl-core
 cd ..
 
-# set the version from the tag and regenerate the messages from xcl at the tag
+# set the version from the tag and the engine from the pin, and regenerate the
+# messages from xcl at the pin
 sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$VERSION\"/" xcl/_version.py
-sed -i "s/__engine_version__ = \"[^\"]*\"/__engine_version__ = \"$TAG\"/" xcl/_version.py
+sed -i "s/__engine_version__ = \"[^\"]*\"/__engine_version__ = \"$ENGINE\"/" xcl/_version.py
 grep _version__ xcl/_version.py
 make protos XCL_SRC="$XCL_SRC" PYTHON=python
 
-# check the engine reports the tag
+# check the engine reports the pin
 python -m pip install --upgrade pip
 python -m pip install -e .
-python -c "import xcl; v = xcl.engine_version(); print(v); assert v == '$TAG', v"
+python -c "import xcl; v = xcl.engine_version(); print(v); assert v == '$ENGINE', v"
 
 # build the wheel
 python -m pip install build

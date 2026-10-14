@@ -1,28 +1,32 @@
-# Publishes the xcl-lang package, imported as xcl, for one xcl release. The xcl release workflow
-# dispatches it with the tag once the signed engine archives are attached to
-# the xcl GitHub release; it can also be run by hand for a tag.
+# Publishes the xcl-lang package, imported as xcl, for one xcl-python tag. The
+# tag is pushed by tag.yml when a pull request with a major, minor or patch
+# label merges; the workflow can also be run by hand for a tag. The package
+# version comes from the tag, and the engine it bundles from the xcl tag
+# pinned in xcl-ref.txt at that tag: the two are versioned separately.
 #
 # For each of the seven platforms the workflow downloads the engine program's
 # archive, xcl-core_<version>_<os>_<arch>[_musl], the checksums and their
-# signature from the xcl release, verifies the signature against
+# signature from the pinned xcl release, verifies the signature against
 # keys/jumppad-labs.asc and the archive against the checksums, places the
 # program in the package's xcl/_bin, regenerates the messages from xcl at the
-# tag, builds a wheel tagged py3-none-<platform> at the tag's version, and
+# pin, builds a wheel tagged py3-none-<platform> at the tag's version, and
 # runs the parity suite against that wheel. An sdist is built too. Everything
 # is published with PyPI Trusted Publishing from the pypi environment, and the
 # published package is then installed on every platform with no Go or C
 # compiler on the path, where .github/scripts/install_check.py applies a
-# configuration, reads the entity back and checks the engine reports the tag.
+# configuration, reads the entity back and checks the engine reports the pin.
+# Last, a GitHub release is created for the tag, its notes listing the pull
+# requests merged since the previous tag and naming the bundled engine.
 
 name: Release
 
 on:
-  repository_dispatch:
-    types: [xcl-release]
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: The xcl tag to release, e.g. v0.5.0
+        description: The xcl-python tag to release, e.g. v0.8.1
         required: true
         type: string
 
@@ -36,20 +40,32 @@ jobs:
     outputs:
       tag: ${{ steps.settings.outputs.tag }}
       version: ${{ steps.settings.outputs.version }}
+      engine: ${{ steps.settings.outputs.engine }}
+      engine-version: ${{ steps.settings.outputs.engine-version }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
       - id: settings
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            tag="${{ github.event.client_payload.tag }}"
-          else
-            tag="${{ inputs.tag }}"
-          fi
-          case "$tag" in
+          case "$TAG" in
             v*) ;;
-            *) echo "the tag must start with v, got $tag"; exit 1 ;;
+            *) echo "the tag must start with v, got $TAG"; exit 1 ;;
           esac
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          # the engine is the xcl tag pinned at the package's tag
+          engine="$(tr -d '[:space:]' < xcl-ref.txt)"
+          case "$engine" in
+            v*) ;;
+            *) echo "xcl-ref.txt must pin an xcl tag starting with v, got $engine"; exit 1 ;;
+          esac
+          echo "package $TAG bundles the xcl engine $engine"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "engine=$engine" >> "$GITHUB_OUTPUT"
+          echo "engine-version=${engine#v}" >> "$GITHUB_OUTPUT"
 
   wheels:
     name: Wheel ${{ matrix.target.platform }}
@@ -67,14 +83,18 @@ jobs:
     env:
       TAG: ${{ needs.settings.outputs.tag }}
       VERSION: ${{ needs.settings.outputs.version }}
+      ENGINE: ${{ needs.settings.outputs.engine }}
+      ENGINE_VERSION: ${{ needs.settings.outputs.engine-version }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: actions/checkout@v4
         with:
           repository: jumppad-labs/xcl
-          ref: ${{ env.TAG }}
+          ref: ${{ env.ENGINE }}
           path: xcl-src
 
       - uses: actions/setup-go@v5
@@ -96,16 +116,16 @@ jobs:
           set -euo pipefail
           mkdir -p engine && cd engine
           case '${{ matrix.target.asset }}' in
-            windows_*) archive="xcl-core_${VERSION}_${{ matrix.target.asset }}.zip" ;;
-            *)         archive="xcl-core_${VERSION}_${{ matrix.target.asset }}.tar.gz" ;;
+            windows_*) archive="xcl-core_${ENGINE_VERSION}_${{ matrix.target.asset }}.zip" ;;
+            *)         archive="xcl-core_${ENGINE_VERSION}_${{ matrix.target.asset }}.tar.gz" ;;
           esac
-          gh release download "$TAG" --repo jumppad-labs/xcl \
+          gh release download "$ENGINE" --repo jumppad-labs/xcl \
             --pattern "$archive" \
-            --pattern "xcl-core_${VERSION}_checksums.txt" \
-            --pattern "xcl-core_${VERSION}_checksums.txt.sig"
+            --pattern "xcl-core_${ENGINE_VERSION}_checksums.txt" \
+            --pattern "xcl-core_${ENGINE_VERSION}_checksums.txt.sig"
           gpg --batch --import ../tests/keys/jumppad-labs.asc
-          gpg --batch --verify "xcl-core_${VERSION}_checksums.txt.sig" "xcl-core_${VERSION}_checksums.txt"
-          grep " $archive\$" "xcl-core_${VERSION}_checksums.txt" | sha256sum -c -
+          gpg --batch --verify "xcl-core_${ENGINE_VERSION}_checksums.txt.sig" "xcl-core_${ENGINE_VERSION}_checksums.txt"
+          grep " $archive\$" "xcl-core_${ENGINE_VERSION}_checksums.txt" | sha256sum -c -
           case "$archive" in
             *.zip)    unzip -q "$archive" ;;
             *.tar.gz) tar -xzf "$archive" ;;
@@ -117,7 +137,7 @@ jobs:
             *) chmod +x '../xcl/_bin/${{ matrix.target.exe }}' ;;
           esac
 
-      - name: Set the version from the tag
+      - name: Set the version from the tag and the engine from the pin
         shell: bash
         run: |
           python - <<'EOF'
@@ -125,21 +145,21 @@ jobs:
           path = "xcl/_version.py"
           text = open(path).read()
           text = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{os.environ["VERSION"]}"', text)
-          text = re.sub(r'__engine_version__\s*=\s*"[^"]+"', f'__engine_version__ = "{os.environ["TAG"]}"', text)
+          text = re.sub(r'__engine_version__\s*=\s*"[^"]+"', f'__engine_version__ = "{os.environ["ENGINE"]}"', text)
           open(path, "w").write(text)
           EOF
           grep _version__ xcl/_version.py
 
-      - name: Regenerate the messages from xcl at the tag
+      - name: Regenerate the messages from xcl at the pin
         shell: bash
         run: make protos XCL_SRC="$PWD/xcl-src" PYTHON=python
 
-      - name: Check the engine reports the tag
+      - name: Check the engine reports the pin
         shell: bash
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -c "import xcl; v = xcl.engine_version(); print(v); assert v == '$TAG', v"
+          python -c "import xcl; v = xcl.engine_version(); print(v); assert v == '$ENGINE', v"
 
       - name: Build the wheel
         shell: bash
@@ -195,13 +215,17 @@ jobs:
     env:
       TAG: ${{ needs.settings.outputs.tag }}
       VERSION: ${{ needs.settings.outputs.version }}
+      ENGINE: ${{ needs.settings.outputs.engine }}
+      ENGINE_VERSION: ${{ needs.settings.outputs.engine-version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: actions/checkout@v4
         with:
           repository: jumppad-labs/xcl
-          ref: ${{ env.TAG }}
+          ref: ${{ env.ENGINE }}
           path: xcl-src
 
       - name: Build and test the wheel in Alpine
@@ -212,7 +236,7 @@ jobs:
           ASSET: ${{ matrix.target.asset }}
         run: |
           docker run --rm -v "$PWD:/work" -w /work \
-            -e TAG -e VERSION -e GH_TOKEN -e XCL_WHEEL_PLATFORM -e ASSET -e GO_VERSION -e XCL_SRC=/work/xcl-src \
+            -e TAG -e VERSION -e ENGINE -e ENGINE_VERSION -e GH_TOKEN -e XCL_WHEEL_PLATFORM -e ASSET -e GO_VERSION -e XCL_SRC=/work/xcl-src \
             python:3-alpine sh -e .github/scripts/musl-wheel.sh
 
       - uses: actions/upload-artifact@v4
@@ -227,12 +251,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.settings.outputs.version }}
+      ENGINE: ${{ needs.settings.outputs.engine }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.settings.outputs.tag }}
       - uses: actions/checkout@v4
         with:
           repository: jumppad-labs/xcl
-          ref: ${{ needs.settings.outputs.tag }}
+          ref: ${{ env.ENGINE }}
           path: xcl-src
       - uses: actions/setup-python@v5
         with:
@@ -244,7 +271,7 @@ jobs:
       - name: Set the version and regenerate the messages
         run: |
           sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$VERSION\"/" xcl/_version.py
-          sed -i "s/__engine_version__ = \"[^\"]*\"/__engine_version__ = \"v$VERSION\"/" xcl/_version.py
+          sed -i "s/__engine_version__ = \"[^\"]*\"/__engine_version__ = \"$ENGINE\"/" xcl/_version.py
           make protos XCL_SRC="$PWD/xcl-src" PYTHON=python
       - run: python -m pip install build twine && python -m build --sdist && python -m twine check dist/*
       - uses: actions/upload-artifact@v4
@@ -277,7 +304,7 @@ jobs:
 
   # install the published package on every platform with no Go or C compiler
   # on the path, and check it applies a configuration, reads it back and
-  # reports the tag
+  # reports the pinned engine
   install-check:
     name: Install check ${{ matrix.target.platform }}
     needs: [settings, publish]
@@ -294,9 +321,11 @@ jobs:
     env:
       TAG: ${{ needs.settings.outputs.tag }}
       VERSION: ${{ needs.settings.outputs.version }}
+      ENGINE_TAG: ${{ needs.settings.outputs.engine }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.TAG }}
           sparse-checkout: .github/scripts
 
       - uses: actions/setup-python@v5
@@ -333,17 +362,46 @@ jobs:
     env:
       TAG: ${{ needs.settings.outputs.tag }}
       VERSION: ${{ needs.settings.outputs.version }}
+      ENGINE_TAG: ${{ needs.settings.outputs.engine }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.TAG }}
           sparse-checkout: .github/scripts
 
       - name: Install from PyPI without a toolchain
         shell: bash
         run: |
-          docker run --rm -v "$PWD:/work" -w /work -e TAG -e VERSION python:3-alpine sh -ec '
+          docker run --rm -v "$PWD:/work" -w /work -e TAG -e VERSION -e ENGINE_TAG python:3-alpine sh -ec '
             for attempt in $(seq 1 20); do
               if python -m pip install --no-cache-dir "xcl-lang==$VERSION"; then break; fi
               echo "xcl-lang==$VERSION is not on PyPI yet, waiting (attempt $attempt)"; sleep 30
             done
             python .github/scripts/install_check.py'
+
+  # the GitHub release for the tag: the pull requests merged since the
+  # previous tag, and the engine the package bundles
+  github-release:
+    name: GitHub release
+    needs: [settings, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.settings.outputs.tag }}
+      ENGINE: ${{ needs.settings.outputs.engine }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create the release
+        run: |
+          previous="$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" \
+            --jq '.[].ref | sub("^refs/tags/"; "")' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | awk -v tag="$TAG" '$0 == tag { print prev; exit } { prev = $0 }')"
+          start=()
+          if [ -n "$previous" ]; then
+            echo "notes from $previous to $TAG"
+            start=(--notes-start-tag "$previous")
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" \
+            --notes "Bundles the xcl engine [$ENGINE](https://github.com/jumppad-labs/xcl/releases/tag/$ENGINE)." \
+            --generate-notes "${start[@]}"
