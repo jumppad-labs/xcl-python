@@ -50,3 +50,7 @@ def test_plugin_entities_types_match_fixture(parity_fixtures):
 
 def test_invalid_types_match_fixture(parity_fixtures):
     assert _derived("invalid") == _documents(parity_fixtures, "invalid")
+
+
+def test_singletons_types_match_fixture(parity_fixtures):
+    assert _derived("singletons") == _documents(parity_fixtures, "singletons")

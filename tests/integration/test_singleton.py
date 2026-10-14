@@ -7,6 +7,7 @@ alone; a label field is filled from the block's label.
 
 from __future__ import annotations
 
+import asyncio
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,8 @@ from pathlib import Path
 import pytest
 
 import xcl
+import xcl.aio
+from sync_entities import MemoryStore
 
 pytestmark = pytest.mark.usefixtures("engine")
 
@@ -91,6 +94,65 @@ def test_singleton_is_written_without_labels_and_found_by_its_type(tmp_path):
     assert isinstance(found, Runner)
     assert found.server == "https://maalstrom.app"
     assert found.listen == "127.0.0.1:7660"
+
+
+def test_singleton_is_loaded_from_saved_state(tmp_path):
+    config = write_config(
+        tmp_path,
+        """
+        single_runner {
+          server = "https://maalstrom.app"
+        }
+        """,
+    )
+    state = tmp_path / "state"
+
+    with xcl.Config(registries=[registry()], state_path=state) as c:
+        c.apply(config)
+
+    with xcl.Config(registries=[registry()], state_path=state) as c:
+        c.load()
+        found = c.find(Runner, "single_runner")
+
+    assert found.server == "https://maalstrom.app"
+
+
+def test_singleton_is_encoded_without_labels(tmp_path):
+    config = write_config(
+        tmp_path,
+        """
+        single_runner {
+          server = "https://maalstrom.app"
+        }
+        """,
+    )
+    store = MemoryStore()
+
+    with xcl.Config(registries=[registry()], state_store=store) as c:
+        c.apply(config)
+        text = c.encode_saved_entity(store.record("single_runner"))
+
+    assert text == 'single_runner {\n  server = "https://maalstrom.app"\n}\n'
+
+
+def test_singleton_is_found_through_the_asyncio_api(tmp_path):
+    config = write_config(
+        tmp_path,
+        """
+        single_runner {
+          server = "https://maalstrom.app"
+        }
+        """,
+    )
+
+    async def main() -> Runner:
+        async with xcl.aio.Config(registries=[registry()]) as c:
+            await c.apply(config)
+            return await c.find_one(Runner, "single_runner")
+
+    found = asyncio.run(main())
+
+    assert found.server == "https://maalstrom.app"
 
 
 def test_singleton_is_referenced_by_its_type(tmp_path):

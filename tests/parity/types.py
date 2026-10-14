@@ -100,6 +100,22 @@ class InvalidApp:
     endpoint: xcl.Computed[str] = None
 
 
+# -- singletons ---------------------------------------------------------------
+
+
+@dataclass
+class SingletonsRunner:
+    server: str
+    listen: str | None = None
+
+
+@dataclass
+class SingletonsAgent:
+    model: str
+    server: str | None = None
+    handle: str = xcl.field(label=True, default="")
+
+
 # FIXTURES maps a fixture directory's name to its types: (type, subtype, class),
 # in the order of the fixture's types.json
 FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
@@ -110,6 +126,7 @@ FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
     "outputs": [("app", None, OutputsApp)],
     "plugin_entities": [],
     "invalid": [("app", None, InvalidApp)],
+    "singletons": [("runner", None, SingletonsRunner), ("agent", None, SingletonsAgent)],
 }
 
 

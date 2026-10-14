@@ -93,3 +93,9 @@ def test_parity_invalid(run_parity):
     go, python = run_parity("invalid")
 
     assert_same_record("invalid", go, python)
+
+
+def test_parity_singletons(run_parity):
+    go, python = run_parity("singletons")
+
+    assert_same_record("singletons", go, python)
