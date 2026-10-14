@@ -26,7 +26,7 @@ import pytest
 import xcl_source
 from xcl._transport.inprocess import library_filename
 from xcl._transport.subprocess import program_filename
-from xcl._version import __version__
+from xcl._version import __engine_version__, __version__
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -705,6 +705,7 @@ def test_engine_of_other_version_refused(tmp_path, xcl_src):
     message = output_values(result.stdout, "message:")[0]
     assert "v9.9.9" in message
     assert __version__ in message
+    assert __engine_version__ in message
 
 
 FIRST_CONFIG_TIMED = """

@@ -301,10 +301,14 @@ class EngineVersionError(Error):
 
     code = "engine_version"
 
-    def __init__(self, message: str, *, package: str, engine: str) -> None:
-        super().__init__(message, details={"package": package, "engine": engine})
+    def __init__(self, message: str, *, package: str, engine: str, expected: str = "") -> None:
+        details = {"package": package, "engine": engine}
+        if expected:
+            details["expected"] = expected
+        super().__init__(message, details=details)
         self.package = package
         self.engine = engine
+        self.expected = expected
 
 
 class EngineNotFoundError(Error):

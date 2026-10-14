@@ -5,9 +5,10 @@
 XCL_SRC ?= ../xcl
 PYTHON ?= python3
 
-# VERSION is the package version, from xcl/_version.py; a development
-# engine is stamped with it so the package's version check passes
-VERSION := $(shell $(PYTHON) -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('xcl/_version.py').read()).group(1))")
+# ENGINE_VERSION is the engine version the package checks for, from
+# __engine_version__ in xcl/_version.py; a development engine is stamped with
+# it so the package's version check passes
+ENGINE_VERSION := $(shell $(PYTHON) -c "import re; print(re.search(r'__engine_version__\s*=\s*\"([^\"]+)\"', open('xcl/_version.py').read()).group(1))")
 
 # protos generates the CoreService message classes and the frame messages of
 # the engine program's transport from the xcl checkout's proto/ into
@@ -21,20 +22,20 @@ protos:
 	rm -rf build/protos
 
 # engine builds the engine program, xcl-core, from the xcl checkout into
-# xcl/_bin for the local platform, stamped with this package's version. It
+# xcl/_bin for the local platform, stamped with ENGINE_VERSION. It
 # needs Go and no C compiler; it is the engine the package runs by default
 EXE := $(shell $(PYTHON) -c "import sys; print('.exe' if sys.platform == 'win32' else '')")
 engine:
 	mkdir -p xcl/_bin
-	$(MAKE) -C "$(XCL_SRC)" xcl-core XCL_CORE_VERSION=v$(VERSION) XCL_CORE_OUT="$(CURDIR)/xcl/_bin/xcl-core$(EXE)"
+	$(MAKE) -C "$(XCL_SRC)" xcl-core XCL_CORE_VERSION=$(ENGINE_VERSION) XCL_CORE_OUT="$(CURDIR)/xcl/_bin/xcl-core$(EXE)"
 
 # libxcl builds the engine as a shared library from the xcl checkout into
-# xcl/_lib for the local platform, stamped with this package's version. It
+# xcl/_lib for the local platform, stamped with ENGINE_VERSION. It
 # needs Go and a C compiler, and XCL_TRANSPORT=inprocess selects it
 LIBXCL_EXT := $(shell $(PYTHON) -c "import sys; print('dll' if sys.platform == 'win32' else 'dylib' if sys.platform == 'darwin' else 'so')")
 libxcl:
 	mkdir -p xcl/_lib
-	$(MAKE) -C "$(XCL_SRC)" libxcl LIBXCL_VERSION=v$(VERSION) LIBXCL_OUT="$(CURDIR)/xcl/_lib/libxcl.$(LIBXCL_EXT)"
+	$(MAKE) -C "$(XCL_SRC)" libxcl LIBXCL_VERSION=$(ENGINE_VERSION) LIBXCL_OUT="$(CURDIR)/xcl/_lib/libxcl.$(LIBXCL_EXT)"
 
 # plugins builds the fixture plugins the integration tests use, and the Go
 # parity program, into build/plugins, with the platform's executable suffix

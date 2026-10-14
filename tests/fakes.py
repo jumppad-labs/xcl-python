@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import xcl
 from xcl._core import core_pb2
+from xcl._version import __engine_version__
 
 STATUS_OK = 0
 STATUS_ERROR = 1
@@ -20,14 +20,15 @@ class FakeTransport:
     - a ``core_pb2.Error``, answered with status 1 and its serialised bytes
     - an int, answered as that status with an empty body
 
-    ``GetVersion`` reports the package version with ABI 1 and ``CreateConfig``
+    ``GetVersion`` reports the pinned engine version, ``__engine_version__``,
+    with ABI 1 and ``CreateConfig``
     returns handle 7 unless the script overrides them. ``release`` returns
     ``release_status`` and records the handle in ``released``.
     """
 
     def __init__(self, script: dict[str, Any] | None = None, *, release_status: int = STATUS_OK) -> None:
         self.script: dict[str, Any] = {
-            "GetVersion": core_pb2.GetVersionResponse(version=xcl.__version__, abi_version=1),
+            "GetVersion": core_pb2.GetVersionResponse(version=__engine_version__, abi_version=1),
             "CreateConfig": core_pb2.CreateConfigResponse(handle=7),
         }
         self.script.update(script or {})

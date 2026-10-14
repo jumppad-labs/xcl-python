@@ -125,9 +125,10 @@ jobs:
           path = "xcl/_version.py"
           text = open(path).read()
           text = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{os.environ["VERSION"]}"', text)
+          text = re.sub(r'__engine_version__\s*=\s*"[^"]+"', f'__engine_version__ = "{os.environ["TAG"]}"', text)
           open(path, "w").write(text)
           EOF
-          grep __version__ xcl/_version.py
+          grep _version__ xcl/_version.py
 
       - name: Regenerate the messages from xcl at the tag
         shell: bash
@@ -243,6 +244,7 @@ jobs:
       - name: Set the version and regenerate the messages
         run: |
           sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$VERSION\"/" xcl/_version.py
+          sed -i "s/__engine_version__ = \"[^\"]*\"/__engine_version__ = \"v$VERSION\"/" xcl/_version.py
           make protos XCL_SRC="$PWD/xcl-src" PYTHON=python
       - run: python -m pip install build twine && python -m build --sdist && python -m twine check dist/*
       - uses: actions/upload-artifact@v4
