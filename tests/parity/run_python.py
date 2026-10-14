@@ -234,14 +234,13 @@ class Normaliser:
         return out
 
     def problem(self, err: xcl.Error) -> dict[str, Any]:
-        """One error: its code, and for a positioned problem its file, line, column and summary.
+        """One error: its code, and for a diagnostic its file, line, column, summary, detail, block and field.
 
         The Go program matches a Diagnostic anywhere in the error's tree
-        first, then a ParserError, then a ConfigError. The engine crosses a
-        Diagnostic as the error with a ``severity`` detail beside its
-        ``summary``, ``detail``, ``entity`` and ``field``, and its ``file``,
-        ``line`` and ``column`` when it has a position; a ParserError as the
-        error with ``file``, ``line``, ``column`` and ``summary`` details.
+        first, then a ConfigError. The engine crosses a Diagnostic as the
+        error with a ``severity`` detail beside its ``summary``, ``detail``,
+        ``entity`` and ``field``, and its ``file``, ``line`` and ``column``
+        when it has a position.
         """
         diagnostic = _first(err, lambda e: "severity" in e.details)
         if diagnostic is not None:
@@ -258,16 +257,6 @@ class Normaliser:
                 record["line"] = _int(details.get("line"))
                 record["column"] = _int(details.get("column"))
             return record
-
-        positioned = _first(err, lambda e: "file" in e.details)
-        if positioned is not None:
-            return {
-                "code": "config",
-                "file": self.path(positioned.details.get("file", "")),
-                "line": _int(positioned.details.get("line")),
-                "column": _int(positioned.details.get("column")),
-                "summary": self.text(positioned.details.get("summary", "")),
-            }
 
         if _first(err, lambda e: e.code == "config") is not None:
             return {"code": "config"}
