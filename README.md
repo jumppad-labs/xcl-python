@@ -158,6 +158,33 @@ whether the class declares them or not. A wrongly typed one raises
 with defaults come after the required ones, or the class is declared
 `@dataclass(kw_only=True)`.
 
+An entity type reads its label one of two ways: through its `meta` field,
+which holds the label as `meta.name` beside the rest of the entity's
+metadata, or with a field marked `xcl.field(label=True)`, filled from the
+block's label; a type with a subtype takes two such fields, the subtype and
+the label. A type with neither cannot read a label, so it is a singleton:
+its block is written without labels, a module holds one of it, and it is
+found by its type alone.
+
+```python
+@dataclass
+class Runner:
+    server: str                                      # runner { server = "..." }
+
+
+@dataclass
+class Agent:
+    model: str
+    handle: str = xcl.field(label=True, default="")  # agent "claude" {} gives handle "claude"
+
+
+local.register_type(Runner, "runner")
+local.register_type(Agent, "agent")
+```
+
+`cfg.find(Runner, "runner")` returns the runner, and configuration reads it
+as `runner.server`. A singleton takes no subtype.
+
 Configuration is checked against the class as it is against a Go type: a
 missing required field, a computed field set in configuration or an unknown
 attribute is reported with its file and line. A looked-up `Sensitive` value
@@ -291,8 +318,10 @@ Two edits are needed: drop the base class and the decorator, and pass the
 type, and the subtype if there is one, to `register_type` on the
 `xcl.LocalRegistry` or `xcl.GitHubRegistry` the class was registered on.
 
-- Code that read `.address` or `.meta` declares `meta: xcl.Meta | None =
-  None`, and reads `obj.meta.address` where it read `obj.address`.
+- Keep a `meta: xcl.Meta | None = None` field, or a label field, on every
+  class whose blocks are written with a label: a class with neither is a
+  singleton, written without labels. Code that read `obj.address` reads
+  `obj.meta.address`.
 - Declare `disabled: bool = False` or `depends_on: list[str] =
   xcl.field(default_factory=list)` only if the code reads them;
   configuration may set both on any block either way.

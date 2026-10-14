@@ -116,10 +116,12 @@ def field(
     ``name`` is the name configuration uses when it differs from the
     attribute's; ``block=True`` makes a dataclass-typed field a nested block
     (the default for a dataclass) and ``block=False`` an attribute holding an
-    object value; ``label=True`` marks the string field of a block's element
-    that holds the block's name, which a map of blocks fills from the key and
-    a list of blocks fills when the block is written with a name. ``default``
-    and ``default_factory`` are the dataclass's.
+    object value; ``label=True`` marks a string field that holds a block's
+    label: on an entity class it is filled from the block's label, and a
+    class registered with a subtype takes two, the subtype and the label; on
+    a block's element, a map of blocks fills it from the key and a list of
+    blocks when the block is written with a label. ``default`` and
+    ``default_factory`` are the dataclass's.
     """
     options = FieldOptions(name=name, block=block, label=label)
     if default is not dataclasses.MISSING:
