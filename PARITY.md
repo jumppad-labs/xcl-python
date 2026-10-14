@@ -33,9 +33,12 @@ cancels on `KeyboardInterrupt`.
 | `Outputs()` | `outputs()` | `await outputs()` |
 | `EncodeSavedEntity(data, options...)` | `encode_saved_entity(data, highlight=False)` | `await encode_saved_entity(data, highlight=False)` |
 
-Passing `None` as the class returns the registered class for the entity's
-type, or `xcl.Entity` for a type no class was registered for, which is how a
-Go plugin's entities are read.
+Each configuration hydrates into the classes registered on its own
+registries. Passing `None` as the class returns the class registered on the
+configuration for the entity's type, or `xcl.Entity` for a type it registered
+no class for, which is how a Go plugin's entities are read. A class the
+configuration did not register raises `xcl.NotRegisteredError`, as `All[T]`
+with an unregistered `T` returns `ErrNotRegistered` in Go.
 
 ## Configuration options
 
@@ -57,13 +60,13 @@ Go plugin's entities are read.
 | Go | Python |
 |---|---|
 | `registry.NewLocal(registry.PluginPattern(p))` | `xcl.LocalRegistry(plugin_pattern=p)` |
-| `registry.Register[T](local, name...)`, `local.RegisterType(prototype, name...)` | `local.register_type(cls)` with `@xcl.entity(type, subtype)` |
+| `registry.Register[T](local, type, subtype)`, `local.RegisterType(prototype, type, subtype)` | `local.register_type(cls, type, subtype)` |
 | `local.RegisterFunction(name, fn)` | `local.register_function(fn, name=None)` |
 | `local.RegisterExternalPlugin(path)` | `local.register_external_plugin(path)` |
 | `local.RegisterPluginDirectory(dir)` | `local.register_plugin_directory(dir)` |
 | `registry.NewGitHub(options...)` | `xcl.GitHubRegistry(cache_dir=, trusted_keys=, token=, api_url=)` |
 | `github.RegisterPlugin(repo, version)` | `github.register_plugin(repo, version)` |
-| `registry.Register[T](github, name...)`, `github.RegisterType(prototype, name...)` | `github.register_type(cls)` |
+| `registry.Register[T](github, type, subtype)`, `github.RegisterType(prototype, type, subtype)` | `github.register_type(cls, type, subtype)` |
 
 ## Not applicable
 
@@ -73,4 +76,4 @@ Go plugin's entities are read.
 | `As[T](entity)` | A lookup takes the class to return; `find(cls, address)` is the conversion. |
 | `EncodeEntity(value, options...)` | It renders a Go value; Python renders a saved record with `encode_saved_entity`. |
 | `GetResources()` / `ResourceCount()` | Deprecated in Go in favour of `Entities()` / `EntityCount()`. |
-| `Event.Entity()` through a Go type | `xcl.Event.entity()` hydrates the registered class or `xcl.Entity`. |
+| `Event.Entity()` through a Go type | `xcl.Event.entity()` hydrates the class registered on the configuration that emitted the event, or `xcl.Entity`. |

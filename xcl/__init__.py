@@ -38,6 +38,7 @@ from xcl._errors import (
     PluginVerificationError,
     Problem,
     ProviderError,
+    RemovedNameError,
     TypeFormError,
     TypeMismatchError,
     TypeNameClashError,
@@ -45,7 +46,7 @@ from xcl._errors import (
     UnrecoverableError,
     UnregisteredTypeError,
 )
-from xcl._entity import Entity, Meta, Resource, entity
+from xcl._entity import Entity, Meta
 from xcl._schema import SchemaError
 from xcl._types import UNKNOWN, Computed, Sensitive, field
 from xcl._poll import StateStore
@@ -68,8 +69,6 @@ __all__ = [
     "Change",
     "Summary",
     "mask",
-    "entity",
-    "Resource",
     "Entity",
     "Meta",
     "Sensitive",
@@ -111,6 +110,7 @@ __all__ = [
     "EngineNotFoundError",
     "EngineExitedError",
     "InternalBindingError",
+    "RemovedNameError",
     "engine_version",
 ]
 
@@ -120,3 +120,30 @@ def engine_version() -> str:
     from xcl._client import default_client
 
     return default_client().engine_version()
+
+
+# _REMOVED are the names removed from the package, with what replaces each,
+# so code still using one fails with directions rather than a bare
+# AttributeError; they can go once code has had time to move
+_PLAIN_DATACLASS = (
+    "Declare the block type as a plain dataclass and give its type name when registering it:\n"
+    "\n"
+    "    @dataclass\n"
+    "    class App:\n"
+    "        image: str\n"
+    "        meta: xcl.Meta | None = None  # optional: the block's metadata, meta.address its address\n"
+    "\n"
+    "    local.register_type(App, \"app\")\n"
+    "\n"
+    "See \"Migrating from xcl.Resource and @xcl.entity\" in the README."
+)
+_REMOVED = {
+    "Resource": "xcl.Resource has been removed; a block type needs no base class. " + _PLAIN_DATACLASS,
+    "entity": "xcl.entity has been removed; a block type needs no decorator. " + _PLAIN_DATACLASS,
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _REMOVED:
+        raise RemovedNameError(name, _REMOVED[name])
+    raise AttributeError(f"module 'xcl' has no attribute {name!r}")

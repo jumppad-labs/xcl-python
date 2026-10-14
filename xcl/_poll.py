@@ -22,6 +22,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, Optional, Protocol
 
 from xcl import _errors
+from xcl._classes import ClassMap
 from xcl._client import Client
 from xcl._core import core_pb2
 from xcl._functions import call_function, failed_result
@@ -67,6 +68,7 @@ class Handlers:
     functions: Mapping[str, Callable[..., Any]] = dataclasses.field(default_factory=dict)
     store: Optional[Any] = None
     on_event: Optional[Callable[[Event], Any]] = None
+    classes: Optional[ClassMap] = None
 
 
 class Operation:
@@ -195,7 +197,7 @@ def _dispatch(op: Operation, response: core_pb2.PollResponse, handlers: Handlers
     kind = response.WhichOneof("task")
     if kind == "event":
         if handlers.on_event is not None:
-            handlers.on_event(Event._from_proto(response.event))
+            handlers.on_event(Event._from_proto(response.event, handlers.classes))
     elif kind == "state":
         op.complete(response.state.task_id, answer_state(handlers.store, response.state))
     elif kind == "function":

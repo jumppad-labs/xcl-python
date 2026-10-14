@@ -88,8 +88,8 @@ def new_config(fixture: Fixture, plugins: str, state_dir: str, tmp: str) -> xcl.
     """
     local = xcl.LocalRegistry()
 
-    for cls in fixture_types.register(fixture.name):
-        local.register_type(cls)
+    for type_name, subtype, cls in fixture_types.FIXTURES[fixture.name]:
+        local.register_type(cls, type_name, subtype)
 
     local.register_function(fixture_types.slugify, "slugify")
 

@@ -4,10 +4,11 @@ The Go parity program registers the schema v1 documents in a fixture's
 ``types.json`` directly; the Python side registers these dataclasses, whose
 derived schema must equal those documents (``test_types.py`` checks it).
 
-Several fixtures declare a type called ``app`` with different fields, and
-``xcl.entity`` keys its module-wide registry by type name, so the classes are
-plain dataclasses here and :func:`register` decorates a fixture's classes
-right before a run builds its registry; re-registering replaces the entry.
+Several fixtures declare a type called ``app`` with different fields. Each
+configuration keeps its own map of type names to classes, so the classes are
+plain dataclasses registered by name on the run's registry
+(``local.register_type(cls, type, subtype)``); no per-run re-decoration is
+needed to keep one fixture's ``app`` from replacing another's.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import xcl
 
 
 @dataclass
-class BasicTypesService(xcl.Resource):
+class BasicTypesService:
     port: int
     ratio: float | None = None
     enabled: bool | None = None
@@ -51,7 +52,7 @@ class AnnotationsListener:
 
 
 @dataclass
-class AnnotationsApp(xcl.Resource):
+class AnnotationsApp:
     image: str
     replicas: int = 2
     region: str = "eu"
@@ -66,7 +67,7 @@ class AnnotationsApp(xcl.Resource):
 
 
 @dataclass
-class FunctionsApp(xcl.Resource):
+class FunctionsApp:
     name: str
     secret: xcl.Sensitive[str] | None = None
     token: xcl.Sensitive[str] | None = None
@@ -76,7 +77,7 @@ class FunctionsApp(xcl.Resource):
 
 
 @dataclass
-class VariablesApp(xcl.Resource):
+class VariablesApp:
     region: str
     replicas: int | None = None
 
@@ -85,7 +86,7 @@ class VariablesApp(xcl.Resource):
 
 
 @dataclass
-class OutputsApp(xcl.Resource):
+class OutputsApp:
     region: str
     ports: list[int] | None = None
 
@@ -94,7 +95,7 @@ class OutputsApp(xcl.Resource):
 
 
 @dataclass
-class InvalidApp(xcl.Resource):
+class InvalidApp:
     image: str
     endpoint: xcl.Computed[str] = None
 
@@ -110,14 +111,6 @@ FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
     "plugin_entities": [],
     "invalid": [("app", None, InvalidApp)],
 }
-
-
-def register(fixture: str) -> list[type]:
-    """Register the classes of ``fixture`` under the fixture's type names and return them."""
-    registered = []
-    for type_name, subtype, cls in FIXTURES[fixture]:
-        registered.append(xcl.entity(type_name, subtype)(cls))
-    return registered
 
 
 def slugify(title: str) -> str:

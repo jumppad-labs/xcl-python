@@ -55,9 +55,8 @@ import xcl
 RELEASE_KEY = open("jumppad-labs-releases.asc").read()
 
 
-@xcl.entity("settings")
 @dataclass
-class Settings(xcl.Resource):
+class Settings:
     image: str
     replicas: int = 1
 
@@ -66,7 +65,7 @@ github = xcl.GitHubRegistry(trusted_keys=[RELEASE_KEY])
 github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.2.0")
 
 local = xcl.LocalRegistry()
-local.register_type(Settings)
+local.register_type(Settings, "settings")
 
 with xcl.Config(registries=[local, github], state_path=".xcl") as cfg:
     cfg.apply("./infra")
@@ -108,9 +107,11 @@ with `.meta` and `.address`, for a plugin's type: `network.subnet` and
 
 ### Entity types
 
-A dataclass decorated with `@xcl.entity(type)`, or `@xcl.entity(type, subtype)`
-for a type written `database "postgres" "main" {}`, describes a block type
-through its annotations:
+A plain dataclass describes a block type through its annotations; it needs
+no base class and no decorator. Its type name is given when it is registered,
+as in Go: `local.register_type(App, "app")` is written `app "web" {}`, and
+`local.register_type(Database, "database", "postgres")` is written
+`database "postgres" "main" {}`.
 
 ```python
 @dataclass
@@ -125,9 +126,14 @@ class Listener:
     name: str = xcl.field(label=True, default="")
 
 
-@xcl.entity("app")
 @dataclass
-class App(xcl.Resource):
+class Health:
+    path: str = "/"
+    interval: int = 10
+
+
+@dataclass
+class App:
     image: str                                       # required
     replicas: int = 2                                # optional, with a default
     region: str | None = None                        # optional
@@ -136,7 +142,21 @@ class App(xcl.Resource):
     health: Health | None = None                     # a nested block
     volume: list[Volume] = xcl.field(default_factory=list)        # a list of blocks, in order
     listener: dict[str, Listener] = xcl.field(default_factory=dict)  # named blocks, keyed by name
+    meta: xcl.Meta | None = None                     # the block's metadata, meta.address its address
+
+
+local.register_type(App, "app")
 ```
+
+A class may declare three fields that are not part of its schema: a field
+called `meta`, an `xcl.Meta | None`, receives the block's metadata, and
+`meta.address` gives its address; and fields whose configuration name is
+`disabled`, a `bool`, or `depends_on`, a `list[str]`, receive the values every
+block has. Configuration may set `disabled` and `depends_on` on any block,
+whether the class declares them or not. A wrongly typed one raises
+`xcl.SchemaError` when the class is registered. As for any dataclass, fields
+with defaults come after the required ones, or the class is declared
+`@dataclass(kw_only=True)`.
 
 Configuration is checked against the class as it is against a Go type: a
 missing required field, a computed field set in configuration or an unknown
@@ -159,7 +179,8 @@ local.register_function(slugify)
 
 ```hcl
 app "web" {
-  name = slugify("My App")
+  image  = "nginx:1.27-alpine"
+  region = slugify("US East")
 }
 ```
 
@@ -185,12 +206,16 @@ A custom state store is any object with `load() -> list[bytes]`,
 `save(records: list[bytes])`, `exists() -> bool` and `clear()`; it receives
 each entity's JSON record. The engine's events arrive at `on_event` as
 `xcl.Event`, with the same data levels and masking a Go program has;
-`event.entity()` hydrates the entity an event carries.
+`event.entity()` hydrates the entity an event carries into the class
+registered on the configuration that emitted it, or an `xcl.Entity`.
 
 Lookups: `entities()`, `entity_count()`, `find(cls, address)`,
 `find_by_type(cls, *path)`, `find_one(cls, *path)`, `all(cls)`,
-`outputs()` and `encode_saved_entity(record)`. Pass `None` as the class to
-get the registered class, or an `xcl.Entity` for an unregistered type.
+`outputs()` and `encode_saved_entity(record)`. Each configuration has its
+own classes, those registered on its registries. Pass `None` as the class to
+get the class registered on this configuration for the entity's type, or an
+`xcl.Entity` for a type it did not register; a class this configuration did
+not register raises `xcl.NotRegisteredError`.
 
 ## Asyncio
 
@@ -209,13 +234,13 @@ async def slugify(title: str) -> str:
 
 async def main():
     local = xcl.LocalRegistry()
-    local.register_type(App)
+    local.register_type(App, "app")
     local.register_function(slugify)
 
     async with xcl.aio.Config(registries=[local], state_path=".xcl", on_event=on_event) as cfg:
         await cfg.apply("./infra")
         web = await cfg.find(App, "app.web")
-        print(web.name)
+        print(web.image, web.meta.address)
 
 
 async def on_event(event):
@@ -230,6 +255,54 @@ asyncio task, so a web service keeps answering requests during a long
 apply. Cancelling the task that awaits an operation cancels the engine's
 work: no further provider call starts, the progress made is saved, and
 `asyncio.CancelledError` is raised once the engine has stopped.
+
+## Migrating from xcl.Resource and @xcl.entity
+
+`xcl.Resource` and `@xcl.entity(type, subtype)` have been removed: a block
+type is now a plain dataclass, named when it is registered, as
+`registry.Register[T](local, "database", "postgres")` names a Go type. A class
+written as
+
+```python
+@xcl.entity("database", "postgres")
+@dataclass
+class Database(xcl.Resource):
+    name: str
+    port: int = 5432
+
+
+local.register_type(Database)
+```
+
+becomes
+
+```python
+@dataclass
+class Database:
+    name: str
+    port: int = 5432
+    meta: xcl.Meta | None = None
+
+
+local.register_type(Database, "database", "postgres")
+```
+
+Two edits are needed: drop the base class and the decorator, and pass the
+type, and the subtype if there is one, to `register_type` on the
+`xcl.LocalRegistry` or `xcl.GitHubRegistry` the class was registered on.
+
+- Code that read `.address` or `.meta` declares `meta: xcl.Meta | None =
+  None`, and reads `obj.meta.address` where it read `obj.address`.
+- Declare `disabled: bool = False` or `depends_on: list[str] =
+  xcl.field(default_factory=list)` only if the code reads them;
+  configuration may set both on any block either way.
+- `xcl.Resource` declared its `meta`, `depends_on` and `disabled` fields
+  keyword-only, so they never clashed with a class's required fields. A
+  class that declares them itself puts them after its required fields, as
+  `meta` follows `name` above, or is declared `@dataclass(kw_only=True)`.
+
+Code still using either name raises `xcl.RemovedNameError`, an `xcl.Error`
+and an `ImportError`, whose message shows the new form.
 
 ## Errors
 

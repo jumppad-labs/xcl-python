@@ -10,7 +10,7 @@ from typing import Any, Optional
 from xcl import _errors
 from xcl._client import Client, default_client
 from xcl._core import core_pb2
-from xcl._entity import registration_of
+from xcl._classes import ClassMap
 from xcl._poll import Handlers, Operation, StateStore, drive
 from xcl._schema import hydrate
 from xcl.diff import Diff
@@ -61,12 +61,13 @@ class Config:
     ) -> None:
         self._client = client or default_client()
         self._registries = list(registries)
+        self._classes = ClassMap.from_registries(self._registries)
         self._state_store = state_store
         self._on_event = on_event
         self._functions: dict[str, Callable[..., Any]] = {}
         for r in self._registries:
             self._functions.update(getattr(r, "functions", {}) or {})
-        self._handlers = Handlers(functions=self._functions, store=state_store, on_event=on_event)
+        self._handlers = Handlers(functions=self._functions, store=state_store, on_event=on_event, classes=self._classes)
         self._handle: Optional[int] = None
 
         if state_path is not None and state_store is not None:
@@ -172,16 +173,19 @@ class Config:
     # -- lookups -----------------------------------------------------------
 
     def entities(self) -> list[Any]:
-        """Every entity the configuration holds, as registered classes or :class:`xcl.Entity`."""
+        """Every entity the configuration holds, as the classes registered on it or :class:`xcl.Entity`."""
         response = self._client.call(self._open(), "Entities", core_pb2.EntitiesRequest())
-        return [hydrate(json.loads(e)) for e in response.entities]
+        return [hydrate(json.loads(e), registry=self._classes) for e in response.entities]
 
     def entity_count(self) -> int:
         """How many entities the configuration holds."""
         return len(self._client.call(self._open(), "Entities", core_pb2.EntitiesRequest()).entities)
 
     def find(self, cls: Optional[type], address: str) -> Any:
-        """The entity at ``address``, as ``cls``, or as its registered class or :class:`xcl.Entity` when ``cls`` is ``None``."""
+        """The entity at ``address``, as ``cls``, or as the class registered on this configuration or :class:`xcl.Entity` when ``cls`` is ``None``.
+
+        A ``cls`` this configuration did not register raises :class:`xcl.NotRegisteredError`.
+        """
         response = self._client.call(self._open(), "Find", core_pb2.FindRequest(address=address))
         return self._hydrate(response.entity, cls)
 
@@ -196,8 +200,8 @@ class Config:
         return self._hydrate(response.entity, cls)
 
     def all(self, cls: type) -> list[Any]:
-        """Every entity of the registered class ``cls``."""
-        type_name, subtype = registration_of(cls)
+        """Every entity of ``cls``, a class registered on this configuration."""
+        type_name, subtype = self._classes.names_of(cls)
         path = [type_name, subtype] if subtype else [type_name]
         return self.find_by_type(cls, *path)
 
@@ -215,14 +219,14 @@ class Config:
         decoded = json.loads(data)
         if cls is not None:
             meta = decoded.get("meta") or {}
-            want = registration_of(cls)
+            want = self._classes.names_of(cls)
             got = (meta.get("type", ""), meta.get("subtype", "") or "")
             if got != want:
                 raise _errors.TypeMismatchError(
                     f"the entity at {meta.get('id', '?')} is a {'.'.join(filter(None, got))}, not a {'.'.join(filter(None, want))}",
                     details={"address": meta.get("id", ""), "want": ".".join(filter(None, want)), "got": ".".join(filter(None, got))},
                 )
-        return hydrate(decoded, cls)
+        return hydrate(decoded, cls, registry=self._classes)
 
 
 def _paths(paths: Iterable[str | os.PathLike[str]]) -> list[str]:

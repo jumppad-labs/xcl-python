@@ -17,20 +17,26 @@ import types
 import typing
 from typing import Any, Optional, Union, get_args, get_origin, get_type_hints
 
+from xcl._errors import Error
 from xcl._types import COMPUTED, SENSITIVE_MARKER, FieldOptions, Sensitive, options_of
 
-SCHEMA_VERSION = 1
+if typing.TYPE_CHECKING:
+    from xcl._classes import ClassMap
 
-# BASE_FIELDS are the fields every block type has through Resource, which
-# the engine adds itself and a schema never lists
-BASE_FIELDS = frozenset({"meta", "depends_on", "disabled"})
+SCHEMA_VERSION = 1
 
 # SENSITIVE_SHAPES are the value types the engine can hold a secret of
 SENSITIVE_SHAPES = ("str", "int", "float", "bool", "list[str]", "dict[str, str]")
 
 
-class SchemaError(TypeError):
-    """An annotation has no configuration form, or a sensitive type the engine cannot hold."""
+class SchemaError(Error, TypeError):
+    """A class or function cannot be registered: it is not a dataclass, has no type name, or a field has no configuration form.
+
+    It is raised by the package itself, never by the engine, and is a
+    ``TypeError`` as well, so ``except TypeError`` still catches it.
+    """
+
+    code = "schema"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -49,10 +55,13 @@ class _Resolved:
     label: Optional[str] = None
 
 
-def schema_for(cls: type, *, type_name: Optional[str] = None, subtype: Optional[str] = None) -> dict[str, Any]:
-    """The schema v1 document for ``cls``, a dataclass.
+def schema_for(cls: type, *, type_name: str, subtype: Optional[str] = None) -> dict[str, Any]:
+    """The schema v1 document for ``cls``, a dataclass, as the block type ``type_name`` with an optional ``subtype``.
 
-    Every field but the base fields becomes a schema field: ``str``, ``int``,
+    The base fields, ``meta``, ``disabled`` and ``depends_on``, are left out:
+    a class may declare them at its top level to receive the block's
+    metadata, disabled flag and dependencies, and a wrongly typed one raises
+    :class:`SchemaError`. Every other field becomes a schema field: ``str``, ``int``,
     ``float``, ``bool`` and ``Any`` are attributes; ``list[T]`` and
     ``dict[str, T]`` of those are list and map attributes; a dataclass is a
     nested block, ``list[Dataclass]`` a repeated block and
@@ -69,13 +78,9 @@ def schema_for(cls: type, *, type_name: Optional[str] = None, subtype: Optional[
             "decorate the class itself with @dataclass, a dataclass base is not enough"
         )
 
-    doc: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
-        "type": type_name or getattr(cls, "__xcl_type__", None) or _snake(cls.__name__),
-    }
-    sub = subtype if subtype is not None else getattr(cls, "__xcl_subtype__", None)
-    if sub:
-        doc["subtype"] = sub
+    doc: dict[str, Any] = {"schema_version": SCHEMA_VERSION, "type": type_name}
+    if subtype:
+        doc["subtype"] = subtype
     doc["fields"] = _fields_of(cls, top=True)
     return doc
 
@@ -95,14 +100,45 @@ def _fields_of(cls: type, *, top: bool) -> list[dict[str, Any]]:
     hints = get_type_hints(cls, include_extras=True)
     fields = []
     for f in dataclasses.fields(cls):
-        if top and f.name in BASE_FIELDS:
-            continue
         options = options_of(f)
+        if top and _is_base_field(cls, f, hints.get(f.name, f.type), options):
+            continue
         if options.label:
             # the label field is named by the block that holds the element
             continue
         fields.append(_field_doc(cls, f, hints.get(f.name, f.type), options))
     return fields
+
+
+def _is_base_field(owner: type, f: dataclasses.Field[Any], annotation: Any, options: FieldOptions) -> bool:
+    """Whether ``f``, a top-level field of ``owner``, is one of the base fields, checking its type.
+
+    As in a Go plain struct, the metadata is the field called ``meta``, typed
+    ``Meta`` or ``Meta | None``, and the disabled flag and dependencies are
+    the fields whose configuration name is ``disabled``, a ``bool``, and
+    ``depends_on``, a ``list[str]``.
+    """
+    from xcl._entity import Meta
+
+    where = f"{_name(owner)}.{f.name}"
+    name = options.name or f.name
+    if f.name == "meta":
+        if annotation is not Meta and not (_is_union(annotation) and set(get_args(annotation)) == {Meta, type(None)}):
+            raise SchemaError(f"field {where}: a field called meta is the block's metadata and must be an xcl.Meta | None, not {_name(annotation)}")
+        if options.name:
+            raise SchemaError(f"field {where}: the block's metadata is filled by xcl, not configuration, and takes no configuration name")
+        return True
+    if name == "meta":
+        raise SchemaError(f"field {where}: \"meta\" is held by every block and cannot be declared")
+    if name == "disabled":
+        if annotation is not bool:
+            raise SchemaError(f"field {where}: \"disabled\" mirrors every block's disabled flag and must be a bool, not {_name(annotation)}")
+        return True
+    if name == "depends_on":
+        if get_origin(annotation) is not list or get_args(annotation) != (str,):
+            raise SchemaError(f"field {where}: \"depends_on\" mirrors every block's dependencies and must be a list[str], not {_name(annotation)}")
+        return True
+    return False
 
 
 def label_field_of(cls: type) -> Optional[tuple[str, str]]:
@@ -326,15 +362,6 @@ def _name(t: Any) -> str:
     return getattr(t, "__name__", None) or repr(t)
 
 
-def _snake(name: str) -> str:
-    out = []
-    for i, ch in enumerate(name):
-        if ch.isupper() and i and (not name[i - 1].isupper() or (i + 1 < len(name) and name[i + 1].islower())):
-            out.append("_")
-        out.append(ch.lower())
-    return "".join(out)
-
-
 # ---------------------------------------------------------------------------
 # function signatures
 
@@ -412,25 +439,27 @@ def cty_to_python(value: Any) -> Any:
 # hydration
 
 
-def hydrate(data: Any, cls: Optional[type] = None, *, registry: Optional[dict[tuple[str, str], type]] = None) -> Any:
+def hydrate(data: Any, cls: Optional[type] = None, *, registry: Optional[ClassMap] = None) -> Any:
     """An entity's JSON as a Python object.
 
     With ``cls`` the JSON is decoded into that class; otherwise the class
-    registered for the entity's ``meta.type`` and ``meta.subtype`` is used,
-    and an entity of an unregistered type becomes an :class:`Entity`. A
-    sensitive field holding the marker becomes a redacted :class:`Sensitive`,
-    a masked envelope likewise, and a real value a :class:`Sensitive` holding
-    it. Nested blocks, lists of blocks and maps of named blocks are decoded
-    into their classes.
+    ``registry``, a configuration's class map, holds for the entity's
+    ``meta.type`` and ``meta.subtype`` is used, and an entity of a type with
+    no class there becomes an :class:`Entity`. ``meta`` is filled only when
+    the class declares it, and only at the top level. A sensitive field
+    holding the marker becomes a redacted :class:`Sensitive`, a masked
+    envelope likewise, and a real value a :class:`Sensitive` holding it.
+    Nested blocks, lists of blocks and maps of named blocks are decoded into
+    their classes.
     """
-    from xcl._entity import Entity, Meta, registered_class
+    from xcl._entity import Entity, Meta
 
     if not isinstance(data, dict):
         return data
 
-    if cls is None:
+    if cls is None and registry is not None:
         meta = data.get("meta") or {}
-        cls = registered_class(meta.get("type", ""), meta.get("subtype", ""), registry=registry)
+        cls = registry.class_for(meta.get("type", ""), meta.get("subtype", ""))
     if cls is None:
         return Entity(data)
 
@@ -438,12 +467,14 @@ def hydrate(data: Any, cls: Optional[type] = None, *, registry: Optional[dict[tu
 
 
 def _hydrate_into(cls: type, data: dict[str, Any], meta_cls: Any) -> Any:
+    # meta_cls is given for the entity itself and None for a nested block,
+    # whose fields called meta are ordinary fields
     hints = get_type_hints(cls, include_extras=True)
     values: dict[str, Any] = {}
     for f in dataclasses.fields(cls):
         options = options_of(f)
         key = options.name or f.name
-        if f.name == "meta" and f.name in BASE_FIELDS:
+        if meta_cls is not None and f.name == "meta":
             raw = data.get("meta")
             values["meta"] = meta_cls.from_json(raw) if isinstance(raw, dict) else None
             continue
@@ -475,9 +506,7 @@ def _hydrate_value(annotation: Any, value: Any, options: FieldOptions) -> Any:
 
     if dataclasses.is_dataclass(annotation) and isinstance(annotation, type):
         if isinstance(value, dict):
-            from xcl._entity import Meta
-
-            return _hydrate_into(annotation, value, Meta)
+            return _hydrate_into(annotation, value, None)
         return value
 
     origin = get_origin(annotation)

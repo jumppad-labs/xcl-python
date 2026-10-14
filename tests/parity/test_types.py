@@ -18,7 +18,10 @@ def _documents(fixtures: Path, fixture: str) -> list[dict[str, Any]]:
 
 
 def _derived(fixture: str) -> list[dict[str, Any]]:
-    return [schema_for(cls) for cls in fixture_types.register(fixture)]
+    return [
+        schema_for(cls, type_name=type_name, subtype=subtype)
+        for type_name, subtype, cls in fixture_types.FIXTURES[fixture]
+    ]
 
 
 def test_basic_types_types_match_fixture(parity_fixtures):

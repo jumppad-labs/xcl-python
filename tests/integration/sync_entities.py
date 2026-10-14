@@ -39,9 +39,8 @@ class Listener:
     port: int = 0
 
 
-@xcl.entity("sync_app")
 @dataclass
-class SyncApp(xcl.Resource):
+class SyncApp:
     """Every annotation form the schema supports, on one config-only type."""
 
     image: str
@@ -52,21 +51,32 @@ class SyncApp(xcl.Resource):
     volume: list[Volume] = field(default_factory=list)
     listener: dict[str, Listener] = field(default_factory=dict)
     region: str | None = None
+    meta: xcl.Meta | None = None
+    disabled: bool = False
+    depends_on: list[str] = field(default_factory=list)
 
 
-@xcl.entity("sync_database", "postgres")
 @dataclass
-class SyncDatabase(xcl.Resource):
+class SyncDatabase:
     """A type with a subtype: ``sync_database "postgres" "main" {}``."""
 
     version: str = "16"
+    meta: xcl.Meta | None = None
+
+
+@dataclass
+class PlainApp:
+    """The plainest block type: no base, no decorator, no meta, disabled or depends_on."""
+
+    image: str
+    replicas: int = 1
 
 
 def registry() -> xcl.LocalRegistry:
     """A registry declaring both classes."""
     found = xcl.LocalRegistry()
-    found.register_type(SyncApp)
-    found.register_type(SyncDatabase)
+    found.register_type(SyncApp, "sync_app")
+    found.register_type(SyncDatabase, "sync_database", "postgres")
     return found
 
 

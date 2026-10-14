@@ -7,14 +7,24 @@ then pass the registry to :class:`xcl.Config`.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from collections.abc import Callable, Iterable
 from typing import Any, Optional
 
 from xcl._core import core_pb2
-from xcl._entity import registration_of, schema_of
-from xcl._schema import SchemaError, signature_for
+from xcl._schema import SchemaError, is_dataclass_itself, schema_for, signature_for
+
+
+@dataclasses.dataclass(frozen=True)
+class Registration:
+    """A class registered as a block type: the class, its type and subtype, and its derived schema."""
+
+    cls: type
+    type: str
+    subtype: str
+    schema: dict[str, Any]
 
 
 class LocalRegistry:
@@ -26,16 +36,26 @@ class LocalRegistry:
 
     def __init__(self, *, plugin_pattern: Optional[str] = None) -> None:
         self._plugin_pattern = plugin_pattern
-        self._types: list[type] = []
+        self._types: list[Registration] = []
         self._functions: dict[str, Callable[..., Any]] = {}
         self._signatures: dict[str, dict[str, Any]] = {}
         self._external_plugins: list[str] = []
         self._plugin_directories: list[str] = []
 
-    def register_type(self, cls: type) -> None:
-        """Declare an entity class registered with :func:`xcl.entity` as a config-only type."""
-        registration_of(cls)
-        self._types.append(cls)
+    def register_type(self, cls: type, type: str, subtype: Optional[str] = None) -> None:  # noqa: A002 - mirrors the Go name
+        """Declare the dataclass ``cls`` as the block type ``type``, with an optional ``subtype``.
+
+        The type and subtype become the block's labels and address, as in Go:
+        ``register_type(App, "app")`` is written ``app "web" {}`` and found
+        at ``app.web``; ``register_type(Database, "database", "postgres")``
+        is written ``database "postgres" "main" {}`` and found at
+        ``database.postgres.main``. The class needs no base class or
+        decorator; it may declare ``meta``, ``disabled`` and ``depends_on``
+        to receive them. A class that is not itself a dataclass, an empty
+        type name, or an annotation with no configuration form raises
+        :class:`SchemaError` naming the class or field.
+        """
+        self._types.append(_registration(cls, type, subtype))
 
     def register_function(self, fn: Callable[..., Any], name: Optional[str] = None) -> None:
         """Offer ``fn`` to configuration under ``name``, its own name by default.
@@ -63,8 +83,8 @@ class LocalRegistry:
         self._plugin_directories.append(os.fspath(path))
 
     @property
-    def types(self) -> list[type]:
-        """The classes registered, in order."""
+    def types(self) -> list[Registration]:
+        """The block types registered, in order."""
         return list(self._types)
 
     @property
@@ -75,7 +95,7 @@ class LocalRegistry:
     def _to_proto(self) -> core_pb2.Registry:
         local = core_pb2.LocalRegistry(
             plugin_pattern=self._plugin_pattern or "",
-            types=[_declared_type(cls) for cls in self._types],
+            types=[_declared_type(r) for r in self._types],
             external_plugins=list(self._external_plugins),
             plugin_directories=list(self._plugin_directories),
             functions=[
@@ -109,7 +129,7 @@ class GitHubRegistry:
         self._token = token
         self._api_url = api_url
         self._plugins: list[tuple[str, str]] = []
-        self._types: list[type] = []
+        self._types: list[Registration] = []
 
     def register_plugin(self, repository: str, version: str) -> None:
         """Use the plugin released by ``repository`` (``owner/repo``) at ``version`` (``vX.Y.Z``)."""
@@ -117,14 +137,13 @@ class GitHubRegistry:
             raise ValueError("a GitHub plugin needs a repository and a version")
         self._plugins.append((repository, version))
 
-    def register_type(self, cls: type) -> None:
-        """Declare an entity class on this registry, as :meth:`LocalRegistry.register_type` does."""
-        registration_of(cls)
-        self._types.append(cls)
+    def register_type(self, cls: type, type: str, subtype: Optional[str] = None) -> None:  # noqa: A002 - mirrors the Go name
+        """Declare the dataclass ``cls`` as a block type on this registry, as :meth:`LocalRegistry.register_type` does."""
+        self._types.append(_registration(cls, type, subtype))
 
     @property
-    def types(self) -> list[type]:
-        """The classes registered on this registry, in order."""
+    def types(self) -> list[Registration]:
+        """The block types registered on this registry, in order."""
         return list(self._types)
 
     @property
@@ -139,14 +158,30 @@ class GitHubRegistry:
             trusted_keys=list(self._trusted_keys),
             token=self._token or "",
             api_url=self._api_url or "",
-            types=[_declared_type(cls) for cls in self._types],
+            types=[_declared_type(r) for r in self._types],
         )
         return core_pb2.Registry(github=github)
 
 
-def _declared_type(cls: type) -> core_pb2.DeclaredType:
-    type_name, subtype = registration_of(cls)
-    return core_pb2.DeclaredType(type=type_name, subtype=subtype, schema=json.dumps(schema_of(cls)).encode())
+def _registration(cls: type, type_name: str, subtype: Optional[str]) -> Registration:
+    name = getattr(cls, "__name__", None) or repr(cls)
+    if not is_dataclass_itself(cls):
+        raise SchemaError(
+            f"{name} must be a dataclass to be registered as a block type; "
+            "decorate the class itself with @dataclass, a dataclass base is not enough"
+        )
+    if not type_name:
+        raise SchemaError(f"{name} must be registered with a type name, such as register_type({name}, \"app\")")
+    schema = schema_for(cls, type_name=type_name, subtype=subtype)
+    return Registration(cls=cls, type=type_name, subtype=subtype or "", schema=schema)
+
+
+def _declared_type(registration: Registration) -> core_pb2.DeclaredType:
+    return core_pb2.DeclaredType(
+        type=registration.type,
+        subtype=registration.subtype,
+        schema=json.dumps(registration.schema).encode(),
+    )
 
 
 __all__ = ["LocalRegistry", "GitHubRegistry"]
