@@ -35,8 +35,9 @@ nothing: the engine starts the first time a configuration is used, is shared
 by every configuration in the process, and stops on its own when the last
 configuration is closed or the interpreter exits. It never outlives its
 host, even one that is killed, and its diagnostics go to your standard
-error. The package version is the xcl release it bundles, and it refuses to
-run against any other engine.
+error. The package has its own version, and bundles the xcl engine release
+pinned in `xcl-ref.txt` when it was built; `xcl.engine_version()` reports
+it. The package refuses to run against any other engine.
 
 ## Getting started
 
@@ -300,6 +301,28 @@ in-process route the forking rule is stricter, since the engine is a Go
 runtime in the process: use the `spawn` start method, or create the
 configuration after the fork, in gunicorn's `post_fork` hook or celery's
 `worker_process_init` signal.
+### Releases and the engine pin
+
+Releases are automatic, and follow
+[xcl's release process](https://github.com/jumppad-labs/xcl#releases). Every
+pull request carries exactly one of the labels `patch`, `minor`, `major` or
+`no-release`, and merging it tags and publishes the next version of this
+package to PyPI, with a GitHub release listing the merged pull requests and
+naming the bundled engine. The package's version line is its own: a fix here
+releases Python alone, with no xcl release.
+
+`xcl-ref.txt` pins the xcl release the package is tested against, built
+against and bundles. When xcl releases, a pull request titled "Use xcl engine
+<tag>" moves the pin to the new tag, labelled with the same size as the engine
+release. It merges by itself once its checks pass, which releases the package
+with the new engine. If its checks fail it stays open; fix the binding on its
+branch and it merges once they pass.
+
+A release stamps the pin into `xcl/_version.py` as `__engine_version__`. In a
+checkout it holds the development value `v0.0.0-dev`, which `make engine` and
+`make libxcl` also stamp on the engine they build, so a development engine
+always passes the version check.
+
 `PARITY.md` lists every Go operation and lookup with its Python equivalent. The distribution is published as `xcl-lang`, since the name `xcl` on PyPI belongs to another project; the import name is `xcl`.
 
 ## Licence
