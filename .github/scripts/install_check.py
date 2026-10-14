@@ -5,7 +5,8 @@ Run by the install-check jobs of release.yml on every platform, after
 musl ones in a plain python:3-alpine image). It registers a config-only class,
 the ``settings`` type of the README's getting started, applies a
 configuration, reads the entity back, closes the configuration, and checks
-the engine reports the tag in ``TAG``. It needs nothing but the standard
+the engine reports the engine tag in ``ENGINE_TAG`` (``TAG`` when it is not
+set). It needs nothing but the standard
 library and xcl.
 """
 
@@ -27,7 +28,7 @@ class Settings(xcl.Resource):
 
 
 def main() -> None:
-    tag = os.environ["TAG"]
+    tag = os.environ.get("ENGINE_TAG") or os.environ["TAG"]
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)

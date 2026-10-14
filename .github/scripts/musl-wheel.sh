@@ -32,7 +32,8 @@ cd ..
 
 # set the version from the tag and regenerate the messages from xcl at the tag
 sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$VERSION\"/" xcl/_version.py
-grep __version__ xcl/_version.py
+sed -i "s/__engine_version__ = \"[^\"]*\"/__engine_version__ = \"$TAG\"/" xcl/_version.py
+grep _version__ xcl/_version.py
 make protos XCL_SRC="$XCL_SRC" PYTHON=python
 
 # check the engine reports the tag

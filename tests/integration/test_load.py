@@ -9,6 +9,7 @@ import pytest
 import xcl
 from xcl._client import default_client, normalise_version
 from xcl._core import core_pb2
+from xcl._version import __engine_version__
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -47,10 +48,10 @@ def test_config_opens_and_closes_against_engine():
 
 
 @needs_engine
-def test_engine_reports_package_version():
+def test_engine_reports_pinned_engine_version():
     reported = xcl.engine_version()
 
-    assert normalise_version(reported) == normalise_version(xcl.__version__)
+    assert normalise_version(reported) == normalise_version(__engine_version__)
 
 
 @needs_engine
@@ -76,4 +77,4 @@ def test_ctypes_fallback_drives_engine():
     )
 
     assert result.returncode == 0, result.stderr
-    assert normalise_version(xcl.__version__) in result.stdout
+    assert normalise_version(__engine_version__) in result.stdout

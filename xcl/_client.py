@@ -4,7 +4,8 @@ The client is built from the generated descriptor at run time, so nothing
 beyond the message classes is generated. ``call`` serialises a request,
 passes it to the transport, and decodes the response into the method's
 output class, or raises the exception registered for the engine's error
-code. On first use it checks that the engine's version equals the package's.
+code. On first use it checks that the engine's version is the one the
+package was built for, ``__engine_version__``.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from google.protobuf import message_factory
 from xcl import _errors
 from xcl._core import core_pb2
 from xcl._transport import Transport
-from xcl._version import __version__
+from xcl._version import __engine_version__, __version__
 
 STATUS_OK = 0
 STATUS_ERROR = 1
@@ -82,12 +83,14 @@ class Client:
                 return
             response = self._call(0, "GetVersion", core_pb2.GetVersionRequest())
             self._engine_version = response.version
-            if self._check_version and normalise_version(response.version) != normalise_version(__version__):
+            if self._check_version and normalise_version(response.version) != normalise_version(__engine_version__):
                 raise _errors.EngineVersionError(
-                    f"the xcl engine reports version {response.version}, but this is xcl-lang package "
-                    f"version {__version__}; the xcl-lang package only runs against the engine of its own release",
+                    f"the xcl engine reports version {response.version}, but xcl-lang {__version__} "
+                    f"was built for engine {__engine_version__}; the xcl-lang package only runs against "
+                    "the engine it bundles",
                     package=__version__,
                     engine=response.version,
+                    expected=__engine_version__,
                 )
             self._checked = True
 
