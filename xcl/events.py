@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from xcl import _errors
+from xcl._classes import ClassMap
 from xcl._core import core_pb2
 from xcl._schema import hydrate
 
@@ -35,15 +36,21 @@ class Event:
     data: bytes = b""
     meta: dict[str, Any] = dataclasses.field(default_factory=dict)
 
+    # _classes is the class map of the configuration that emitted the event,
+    # which entity() hydrates through; it is not a field, so it takes no part
+    # in the event's fields, equality or repr, and an event built by hand
+    # has none and hydrates every entity as xcl.Entity
+    _classes = None
+
     @classmethod
-    def _from_proto(cls, e: core_pb2.Event) -> Event:
+    def _from_proto(cls, e: core_pb2.Event, classes: Optional[ClassMap] = None) -> Event:
         meta: dict[str, Any] = {}
         if e.meta_json:
             try:
                 meta = json.loads(e.meta_json)
             except ValueError:
                 meta = {"raw": e.meta_json.decode(errors="replace")}
-        return cls(
+        event = cls(
             time=datetime.fromtimestamp(e.time_unix_nano / 1e9, tz=timezone.utc) if e.time_unix_nano else datetime.fromtimestamp(0, tz=timezone.utc),
             source=e.source,
             operation=e.operation,
@@ -56,12 +63,18 @@ class Event:
             data=bytes(e.data),
             meta=meta,
         )
+        event._classes = classes  # type: ignore[assignment]
+        return event
 
     def entity(self) -> Any:
-        """The entity the event's data holds, hydrated, or ``None`` when the event carries no data."""
+        """The entity the event's data holds, or ``None`` when the event carries no data.
+
+        It is hydrated as the class registered for its type on the
+        configuration that emitted the event, or as :class:`xcl.Entity`.
+        """
         if not self.data:
             return None
-        return hydrate(json.loads(self.data))
+        return hydrate(json.loads(self.data), registry=self._classes)
 
     @property
     def level(self) -> str:

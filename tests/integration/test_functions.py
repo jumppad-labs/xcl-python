@@ -31,9 +31,8 @@ def isolated_home(monkeypatch, tmp_path):
 # -- entity classes ---------------------------------------------------------
 
 
-@xcl.entity("fn_app")
 @dataclass
-class App(xcl.Resource):
+class App:
     """A config-only type whose string fields are filled in by function calls."""
 
     name: str = ""
@@ -41,9 +40,8 @@ class App(xcl.Resource):
     token: xcl.Sensitive[str] | None = None
 
 
-@xcl.entity("fn_num_app")
 @dataclass
-class NumApp(xcl.Resource):
+class NumApp:
     """A config-only type with a numeric field filled in by a function call."""
 
     replicas: int = 0
@@ -92,8 +90,8 @@ def slugify(title: str) -> str:
 def registry_with(fn, name: str | None = None) -> xcl.LocalRegistry:
     """A registry declaring both entity classes and offering ``fn``."""
     found = xcl.LocalRegistry()
-    found.register_type(App)
-    found.register_type(NumApp)
+    found.register_type(App, "fn_app")
+    found.register_type(NumApp, "fn_num_app")
     found.register_function(fn, name=name)
     return found
 

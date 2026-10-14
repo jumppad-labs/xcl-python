@@ -7,10 +7,10 @@ registered for its code, so a program catches ``xcl.NotFoundError`` rather
 than inspecting a code; an unknown code raises the base :class:`Error`, so it
 is still catchable.
 
-Five errors are raised by the binding itself, never by the engine:
+Six errors are raised by the binding itself, never by the engine:
 :class:`ForkedProcessError`, :class:`EngineVersionError`,
-:class:`EngineNotFoundError`, :class:`EngineExitedError` and
-:class:`InternalBindingError`.
+:class:`EngineNotFoundError`, :class:`EngineExitedError`,
+:class:`InternalBindingError` and :class:`RemovedNameError`.
 """
 
 from __future__ import annotations
@@ -375,6 +375,21 @@ def _signal_name(number: int) -> str:
         return signal.Signals(number).name
     except ValueError:
         return str(number)
+
+
+class RemovedNameError(Error, ImportError):
+    """A name removed from the package was used; the message says what replaces it.
+
+    It is raised by the package itself, never by the engine. It is an
+    ``ImportError`` so that ``from xcl import Resource`` reports the message,
+    rather than Python's generic "cannot import name".
+    """
+
+    code = "removed_name"
+
+    def __init__(self, name: str, message: str) -> None:
+        super().__init__(message, details={"name": name})
+        self.name = name
 
 
 class InternalBindingError(Error):

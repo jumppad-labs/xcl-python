@@ -2,8 +2,8 @@
 
 Run by the install-check jobs of release.yml on every platform, after
 ``pip install xcl-lang==<version>`` with no Go or C compiler on the path (the
-musl ones in a plain python:3-alpine image). It registers a config-only class,
-the ``settings`` type of the README's getting started, applies a
+musl ones in a plain python:3-alpine image). It registers a plain dataclass
+by name as the ``settings`` type of the README's getting started, applies a
 configuration, reads the entity back, closes the configuration, and checks
 the engine reports the engine tag in ``ENGINE_TAG`` (``TAG`` when it is not
 set). It needs nothing but the standard
@@ -20,9 +20,8 @@ from pathlib import Path
 import xcl
 
 
-@xcl.entity("settings")
 @dataclass
-class Settings(xcl.Resource):
+class Settings:
     image: str
     replicas: int = 1
 
@@ -37,7 +36,7 @@ def main() -> None:
         (config_dir / "main.xcl").write_text('settings "web" {\n  image = "nginx"\n}\n')
 
         local = xcl.LocalRegistry()
-        local.register_type(Settings)
+        local.register_type(Settings, "settings")
 
         with xcl.Config(registries=[local], state_path=str(root / ".xcl")) as cfg:
             cfg.apply(str(config_dir))

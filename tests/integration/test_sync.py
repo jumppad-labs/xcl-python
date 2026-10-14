@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 import xcl
-from sync_entities import Health, JsonLinesStore, Listener, MemoryStore, SyncApp, SyncDatabase, Volume, registry
+from sync_entities import Health, JsonLinesStore, Listener, MemoryStore, PlainApp, SyncApp, SyncDatabase, Volume, registry
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -85,7 +85,7 @@ def test_registered_class_decodes_and_is_found(tmp_path):
 
     assert isinstance(found, SyncApp)
     assert found.image == "nginx"
-    assert found.address == "sync_app.web"
+    assert found.meta.address == "sync_app.web"
     assert found.meta.name == "web"
     assert isinstance(untyped, SyncApp)
 
@@ -140,6 +140,117 @@ def test_optional_field_gets_default(tmp_path):
     assert found.health is None
     assert found.volume == []
     assert found.listener == {}
+
+
+# -- plain dataclasses and each configuration's classes --------------------
+
+
+PLAIN_WEB = """
+plain_app "web" {
+  image = "nginx"
+  replicas = 3
+}
+"""
+
+DISABLED_WEB = """
+sync_app "base" {
+  image = "redis"
+}
+
+sync_app "web" {
+  image = "nginx"
+  disabled = true
+  depends_on = ["sync_app.base"]
+}
+"""
+
+APP_WEB = """
+app "web" {
+  image = "nginx"
+}
+"""
+
+
+def plain_registry() -> xcl.LocalRegistry:
+    found = xcl.LocalRegistry()
+    found.register_type(PlainApp, "plain_app")
+    return found
+
+
+def app_registry(cls: type) -> xcl.LocalRegistry:
+    """A registry declaring ``cls`` as the block type ``app``."""
+    found = xcl.LocalRegistry()
+    found.register_type(cls, "app")
+    return found
+
+
+def test_plain_dataclass_through_whole_lifecycle(tmp_path):
+    config = write_config(tmp_path, PLAIN_WEB)
+
+    with xcl.Config(registries=[plain_registry()], state_path=tmp_path / "state") as c:
+        c.validate(config)
+        c.apply(config)
+        found = c.find(PlainApp, "plain_app.web")
+        diff = c.diff(config)
+        c.destroy()
+        remaining = c.entity_count()
+
+    assert isinstance(found, PlainApp)
+    assert found == PlainApp(image="nginx", replicas=3)
+    assert isinstance(diff, xcl.Diff)
+    assert diff.summary.create == 0
+    assert diff.summary.update == 0
+    assert remaining == 0
+
+
+def test_disabled_and_depends_on_read_back_on_declaring_class(tmp_path):
+    config = write_config(tmp_path, DISABLED_WEB)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        found = c.find(SyncApp, "sync_app.web")
+
+    assert found.disabled is True
+    assert found.depends_on == ["sync_app.base"]
+
+
+def test_disabled_and_depends_on_accepted_by_class_without_them(tmp_path):
+    config = write_config(
+        tmp_path,
+        """
+        plain_app "base" {
+          image = "redis"
+        }
+
+        plain_app "web" {
+          image = "nginx"
+          disabled = true
+          depends_on = ["plain_app.base"]
+        }
+        """,
+    )
+
+    with xcl.Config(registries=[plain_registry()]) as c:
+        c.validate(config)
+        c.apply(config)
+        found = c.find(PlainApp, "plain_app.web")
+
+    assert isinstance(found, PlainApp)
+
+
+def test_two_configs_each_find_their_own_class(tmp_path):
+    config = write_config(tmp_path, APP_WEB)
+
+    with xcl.Config(registries=[app_registry(SyncApp)]) as first, xcl.Config(registries=[app_registry(PlainApp)]) as second:
+        first.apply(config)
+        second.apply(config)
+        from_first = first.find(None, "app.web")
+        from_second = second.find(None, "app.web")
+
+    assert isinstance(from_first, SyncApp)
+    assert isinstance(from_second, PlainApp)
+    assert from_first.image == "nginx"
+    assert from_second.image == "nginx"
 
 
 # -- sensitive values ------------------------------------------------------
@@ -507,8 +618,33 @@ def test_event_entity_hydrates(tmp_path):
     entity = created.entity()
     assert isinstance(entity, SyncApp)
     assert entity.image == "nginx"
-    assert entity.address == "sync_app.web"
+    assert entity.meta.address == "sync_app.web"
     assert events[0].entity() is None
+
+
+def test_event_entity_is_emitting_configs_class(tmp_path):
+    config = write_config(tmp_path, APP_WEB)
+    first_entities: list[object] = []
+    second_entities: list[object] = []
+
+    def collect_into(entities: list[object]):
+        def on_event(event: xcl.Event) -> None:
+            if event.resource_id == "app.web" and event.operation == "create" and event.phase == "success":
+                entities.append(event.entity())
+
+        return on_event
+
+    with (
+        xcl.Config(registries=[app_registry(SyncApp)], on_event=collect_into(first_entities), event_data="processed") as first,
+        xcl.Config(registries=[app_registry(PlainApp)], on_event=collect_into(second_entities), event_data="processed") as second,
+    ):
+        first.apply(config)
+        second.apply(config)
+
+    assert len(first_entities) == 1
+    assert len(second_entities) == 1
+    assert isinstance(first_entities[0], SyncApp)
+    assert isinstance(second_entities[0], PlainApp)
 
 
 # -- lookup errors ----------------------------------------------------------
@@ -613,10 +749,10 @@ def test_find_by_type_and_all(tmp_path):
         databases = c.all(SyncDatabase)
         everything = c.entities()
 
-    assert sorted(a.address for a in apps_by_type) == ["sync_app.api", "sync_app.web"]
+    assert sorted(a.meta.address for a in apps_by_type) == ["sync_app.api", "sync_app.web"]
     assert all(isinstance(a, SyncApp) for a in apps_by_type)
     assert sorted(a.image for a in apps) == ["httpd", "nginx"]
-    assert [d.address for d in databases] == ["sync_database.postgres.main"]
+    assert [d.meta.address for d in databases] == ["sync_database.postgres.main"]
     assert isinstance(databases[0], SyncDatabase)
     assert len(everything) == 3
 

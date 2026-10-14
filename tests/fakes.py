@@ -19,6 +19,8 @@ class FakeTransport:
     - a response message, answered with status 0 and its serialised bytes
     - a ``core_pb2.Error``, answered with status 1 and its serialised bytes
     - an int, answered as that status with an empty body
+    - a list of the above, answered one per call in order, such as the
+      ``Poll`` responses of one operation
 
     ``GetVersion`` reports the pinned engine version, ``__engine_version__``,
     with ABI 1 and ``CreateConfig``
@@ -39,6 +41,8 @@ class FakeTransport:
     def call(self, handle: int, method: str, request: bytes) -> tuple[int, bytes]:
         self.calls.append((handle, method, request))
         answer = self.script[method]
+        if isinstance(answer, list):
+            answer = answer.pop(0)
         if isinstance(answer, int):
             return answer, b""
         if isinstance(answer, core_pb2.Error):

@@ -22,7 +22,7 @@ from typing import Any, Optional
 from xcl import _errors
 from xcl._client import Client, default_client
 from xcl._core import core_pb2
-from xcl._entity import registration_of
+from xcl._classes import ClassMap
 from xcl._functions import decode_args, encode_result, failed_result
 from xcl._poll import POLL_WAIT_MS, Operation, StateStore, answer_state
 from xcl.config import EVENT_DATA_LEVELS
@@ -57,6 +57,7 @@ class Config:
     ) -> None:
         self._client = client or default_client()
         self._registries = list(registries)
+        self._classes = ClassMap.from_registries(self._registries)
         self._state_store = state_store
         self._on_event = on_event
         self._functions: dict[str, Callable[..., Any]] = {}
@@ -167,7 +168,7 @@ class Config:
 
     async def _handle_event(self, event: core_pb2.Event) -> None:
         assert self._on_event is not None
-        await _call_maybe_async(self._on_event, Event._from_proto(event))
+        await _call_maybe_async(self._on_event, Event._from_proto(event, self._classes))
 
     async def _handle_state(self, op: Operation, task: core_pb2.StateTask) -> None:
         result = await _answer_state_async(self._state_store, task)
@@ -220,7 +221,7 @@ class Config:
         from xcl._schema import hydrate
 
         response = await self._lookup("Entities", core_pb2.EntitiesRequest())
-        return [hydrate(json.loads(e)) for e in response.entities]
+        return [hydrate(json.loads(e), registry=self._classes) for e in response.entities]
 
     async def entity_count(self) -> int:
         """How many entities the configuration holds."""
@@ -243,8 +244,8 @@ class Config:
         return _SyncConfig._hydrate(self, response.entity, cls)  # type: ignore[arg-type]
 
     async def all(self, cls: type) -> list[Any]:
-        """Every entity of the registered class ``cls``."""
-        type_name, subtype = registration_of(cls)
+        """Every entity of ``cls``, a class registered on this configuration."""
+        type_name, subtype = self._classes.names_of(cls)
         path = [type_name, subtype] if subtype else [type_name]
         return await self.find_by_type(cls, *path)
 

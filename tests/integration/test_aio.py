@@ -26,21 +26,21 @@ import xcl.aio
 pytestmark = pytest.mark.usefixtures("engine")
 
 
-@xcl.entity("aio_app")
 @dataclass
-class App(xcl.Resource):
+class App:
     """A config-only type for the asyncio tests."""
 
     name: str
     image: str = "nginx"
+    meta: xcl.Meta | None = None
 
 
-@xcl.entity("aio_db")
 @dataclass
-class Db(xcl.Resource):
+class Db:
     """A second config-only type, so a lookup by type can find exactly one entity."""
 
     version: str = "16"
+    meta: xcl.Meta | None = None
 
 
 WEB = """
@@ -92,8 +92,8 @@ def write_config(directory: Path, text: str, name: str = "main.xcl") -> Path:
 
 def app_registry(*functions) -> xcl.LocalRegistry:
     found = xcl.LocalRegistry()
-    found.register_type(App)
-    found.register_type(Db)
+    found.register_type(App, "aio_app")
+    found.register_type(Db, "aio_db")
     for fn in functions:
         found.register_function(fn)
     return found
@@ -259,6 +259,26 @@ def test_async_event_handler(tmp_path):
     assert (events[-1].operation, events[-1].phase) == ("apply", "success")
     steps = [(e.operation, e.phase) for e in events if e.resource_id == "aio_app.web"]
     assert steps[-1] == ("create", "success")
+
+
+def test_async_event_entity_is_configs_class(tmp_path):
+    config = write_config(tmp_path, WEB)
+    entities: list[object] = []
+
+    async def on_event(event: xcl.Event) -> None:
+        if event.resource_id == "aio_app.web" and event.operation == "create" and event.phase == "success":
+            entities.append(event.entity())
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[app_registry()], on_event=on_event, event_data="processed") as c:
+            await c.apply(config)
+
+    asyncio.run(main())
+
+    assert len(entities) == 1
+    assert isinstance(entities[0], App)
+    assert entities[0].name == "web"
+    assert entities[0].meta.address == "aio_app.web"
 
 
 # -- state stores -----------------------------------------------------------
@@ -493,11 +513,11 @@ def test_lookups_are_awaitable(tmp_path):
 
     got = asyncio.run(main())
 
-    assert sorted(e.address for e in got["entities"]) == ["aio_app.api", "aio_app.web", "aio_db.main", "output.image"]
+    assert sorted(e.meta.address for e in got["entities"]) == ["aio_app.api", "aio_app.web", "aio_db.main", "output.image"]
     assert got["entity_count"] == 4
     assert isinstance(got["find"], App)
     assert got["find"].name == "web"
-    assert sorted(a.address for a in got["find_by_type"]) == ["aio_app.api", "aio_app.web"]
+    assert sorted(a.meta.address for a in got["find_by_type"]) == ["aio_app.api", "aio_app.web"]
     assert isinstance(got["find_one"], Db)
     assert got["find_one"].version == "15"
     assert sorted(a.image for a in got["all"]) == ["httpd", "nginx"]
