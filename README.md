@@ -62,7 +62,7 @@ class Settings:
 
 
 github = xcl.GitHubRegistry(trusted_keys=[RELEASE_KEY])
-github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.2.0")
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.3.0")
 
 local = xcl.LocalRegistry()
 local.register_type(Settings, "settings")
@@ -74,7 +74,7 @@ with xcl.Config(registries=[local, github], state_path=".xcl") as cfg:
     print(settings.image, settings.replicas)
 
     network = cfg.find(None, "docker.network.main")
-    print(network.address, network.subnet, network.docker_id)
+    print(network.meta.id, network.subnet, network.docker_id)
 
     cfg.destroy()
 ```
@@ -102,7 +102,7 @@ docker "container" "web" {
 `apply` runs to completion before returning; other Python threads keep
 running while it works. `find` returns an instance of the registered class
 for a type the program registered, and an `xcl.Entity`, a read-only mapping
-with `.meta` and `.address`, for a plugin's type: `network.subnet` and
+with `.meta`, for a plugin's type: `network.subnet` and
 `network["subnet"]` both read an attribute.
 
 ### Entity types
@@ -142,19 +142,19 @@ class App:
     health: Health | None = None                     # a nested block
     volume: list[Volume] = xcl.field(default_factory=list)        # a list of blocks, in order
     listener: dict[str, Listener] = xcl.field(default_factory=dict)  # named blocks, keyed by name
-    meta: xcl.Meta | None = None                     # the block's metadata, meta.address its address
+    meta: xcl.Meta | None = None                     # the block's metadata, meta.id its address
 
 
 local.register_type(App, "app")
 ```
 
-A class may declare three fields that are not part of its schema: a field
-called `meta`, an `xcl.Meta | None`, receives the block's metadata, and
-`meta.address` gives its address; and fields whose configuration name is
-`disabled`, a `bool`, or `depends_on`, a `list[str]`, receive the values every
-block has. Configuration may set `disabled` and `depends_on` on any block,
-whether the class declares them or not. A wrongly typed one raises
-`xcl.SchemaError` when the class is registered. As for any dataclass, fields
+A field called `meta`, an `xcl.Meta | None`, is not part of the class's
+schema: it receives the block's metadata. `meta.id` is the block's address,
+and `meta.disabled` and `meta.depends_on` are what configuration set on it.
+Configuration may set `disabled` and `depends_on` on any block, so `meta`,
+`disabled` and `depends_on` are held by every block, and a class declaring
+another field by one of those names, or a wrongly typed `meta`, raises
+`xcl.SchemaError` when it is registered. As for any dataclass, fields
 with defaults come after the required ones, or the class is declared
 `@dataclass(kw_only=True)`.
 
@@ -267,7 +267,7 @@ async def main():
     async with xcl.aio.Config(registries=[local], state_path=".xcl", on_event=on_event) as cfg:
         await cfg.apply("./infra")
         web = await cfg.find(App, "app.web")
-        print(web.image, web.meta.address)
+        print(web.image, web.meta.id)
 
 
 async def on_event(event):
@@ -321,14 +321,13 @@ type, and the subtype if there is one, to `register_type` on the
 - Keep a `meta: xcl.Meta | None = None` field, or a label field, on every
   class whose blocks are written with a label: a class with neither is a
   singleton, written without labels. Code that read `obj.address` reads
-  `obj.meta.address`.
-- Declare `disabled: bool = False` or `depends_on: list[str] =
-  xcl.field(default_factory=list)` only if the code reads them;
-  configuration may set both on any block either way.
-- `xcl.Resource` declared its `meta`, `depends_on` and `disabled` fields
-  keyword-only, so they never clashed with a class's required fields. A
-  class that declares them itself puts them after its required fields, as
-  `meta` follows `name` above, or is declared `@dataclass(kw_only=True)`.
+  `obj.meta.id`.
+- Code that read `obj.disabled` or `obj.depends_on` reads `obj.meta.disabled`
+  or `obj.meta.depends_on`; a class declares no field by either name.
+- `xcl.Resource` declared its `meta` field keyword-only, so it never clashed
+  with a class's required fields. A class that declares it itself puts it
+  after its required fields, as `meta` follows `name` above, or is declared
+  `@dataclass(kw_only=True)`.
 
 Code still using either name raises `xcl.RemovedNameError`, an `xcl.Error`
 and an `ImportError`, whose message shows the new form.

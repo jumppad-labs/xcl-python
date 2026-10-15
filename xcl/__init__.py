@@ -131,7 +131,7 @@ _PLAIN_DATACLASS = (
     "    @dataclass\n"
     "    class App:\n"
     "        image: str\n"
-    "        meta: xcl.Meta | None = None  # optional: the block's metadata, meta.address its address\n"
+    "        meta: xcl.Meta | None = None  # optional: the block's metadata, meta.id its address\n"
     "\n"
     "    local.register_type(App, \"app\")\n"
     "\n"

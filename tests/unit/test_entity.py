@@ -6,19 +6,30 @@ import xcl
 from xcl import Meta, RemovedNameError
 
 
-def test_meta_from_json_keeps_extra():
-    meta = Meta.from_json(
-        {"id": "app.web", "name": "web", "type": "app", "line": 2, "column": 1, "generation": 7, "labels": ["x"]}
+def test_meta_from_entity_keeps_extra():
+    meta = Meta.from_entity(
+        {"meta": {"id": "app.web", "name": "web", "type": "app", "line": 2, "column": 1, "generation": 7, "labels": ["x"]}}
     )
 
     assert meta.id == "app.web"
-    assert meta.address == "app.web"
     assert meta.name == "web"
     assert meta.type == "app"
     assert meta.subtype == ""
     assert meta.line == 2
     assert meta.column == 1
     assert meta.extra == {"generation": 7, "labels": ["x"]}
+    assert meta.disabled is False
+    assert meta.depends_on == []
+
+
+def test_meta_from_entity_reads_disabled_and_depends_on_beside_meta():
+    meta = Meta.from_entity(
+        {"meta": {"id": "app.web"}, "disabled": True, "depends_on": ["app.base"], "image": "nginx"}
+    )
+
+    assert meta.disabled is True
+    assert meta.depends_on == ["app.base"]
+    assert meta.extra == {}
 
 
 def test_resource_attribute_raises_removed_name_error_naming_register_type():

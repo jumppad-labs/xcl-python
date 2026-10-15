@@ -55,12 +55,12 @@ def read_operations(log: Path) -> list[tuple[str, str]]:
 
 def assert_items(first: object, second: object) -> None:
     assert isinstance(first, xcl.Entity)
-    assert first.address == FIRST_ADDRESS
+    assert first.meta.id == FIRST_ADDRESS
     assert first.value == "one"
     assert first.output == "first-one"
 
     assert isinstance(second, xcl.Entity)
-    assert second.address == SECOND_ADDRESS
+    assert second.meta.id == SECOND_ADDRESS
     assert second.input == "first-one"
     assert second.output == "second-two"
 
@@ -79,7 +79,7 @@ def test_test_plugin_from_github_registry(tmp_path: Path, installed_release: Rel
             c.destroy()
             remaining = c.find_by_type(None, "test", "item")
 
-    assert sorted(e.address for e in applied) == [FIRST_ADDRESS, SECOND_ADDRESS]
+    assert sorted(e.meta.id for e in applied) == [FIRST_ADDRESS, SECOND_ADDRESS]
     assert_items(first, second)
     assert remaining == []
 
@@ -140,7 +140,7 @@ def test_plugin_entities_readable_generically(tmp_path: Path, installed_release:
             c.destroy()
 
     assert isinstance(first, xcl.Entity)
-    assert first.address == FIRST_ADDRESS
+    assert first.meta.id == FIRST_ADDRESS
     assert first.value == "one"
     assert first["value"] == first.value
     assert "value" in first
@@ -163,7 +163,7 @@ def test_plugin_entities_readable_generically(tmp_path: Path, installed_release:
     assert f"{FIRST_ADDRESS}.output" in second.meta.links
 
     assert all(isinstance(e, xcl.Entity) for e in everything)
-    assert sorted(e.address for e in everything) == [FIRST_ADDRESS, SECOND_ADDRESS]
+    assert sorted(e.meta.id for e in everything) == [FIRST_ADDRESS, SECOND_ADDRESS]
 
 
 def test_plugin_entity_refuses_unknown_names(tmp_path: Path, installed_release: ReleaseFiles):

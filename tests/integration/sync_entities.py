@@ -52,8 +52,6 @@ class SyncApp:
     listener: dict[str, Listener] = field(default_factory=dict)
     region: str | None = None
     meta: xcl.Meta | None = None
-    disabled: bool = False
-    depends_on: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -66,7 +64,7 @@ class SyncDatabase:
 
 @dataclass
 class PlainApp:
-    """The plainest named block type: no base, no decorator, no meta, disabled or depends_on, only its label."""
+    """The plainest named block type: no base, no decorator, no meta, only its label."""
 
     image: str
     replicas: int = 1

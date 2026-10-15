@@ -85,7 +85,7 @@ def test_registered_class_decodes_and_is_found(tmp_path):
 
     assert isinstance(found, SyncApp)
     assert found.image == "nginx"
-    assert found.meta.address == "sync_app.web"
+    assert found.meta.id == "sync_app.web"
     assert found.meta.name == "web"
     assert isinstance(untyped, SyncApp)
 
@@ -203,18 +203,21 @@ def test_plain_dataclass_through_whole_lifecycle(tmp_path):
     assert remaining == 0
 
 
-def test_disabled_and_depends_on_read_back_on_declaring_class(tmp_path):
+def test_disabled_and_depends_on_read_back_through_meta(tmp_path):
     config = write_config(tmp_path, DISABLED_WEB)
 
     with xcl.Config(registries=[registry()]) as c:
         c.apply(config)
         found = c.find(SyncApp, "sync_app.web")
+        base = c.find(SyncApp, "sync_app.base")
 
-    assert found.disabled is True
-    assert found.depends_on == ["sync_app.base"]
+    assert found.meta.disabled is True
+    assert found.meta.depends_on == ["sync_app.base"]
+    assert base.meta.disabled is False
+    assert base.meta.depends_on == []
 
 
-def test_disabled_and_depends_on_accepted_by_class_without_them(tmp_path):
+def test_disabled_and_depends_on_accepted_by_class_without_meta(tmp_path):
     config = write_config(
         tmp_path,
         """
@@ -618,7 +621,7 @@ def test_event_entity_hydrates(tmp_path):
     entity = created.entity()
     assert isinstance(entity, SyncApp)
     assert entity.image == "nginx"
-    assert entity.meta.address == "sync_app.web"
+    assert entity.meta.id == "sync_app.web"
     assert events[0].entity() is None
 
 
@@ -749,10 +752,10 @@ def test_find_by_type_and_all(tmp_path):
         databases = c.all(SyncDatabase)
         everything = c.entities()
 
-    assert sorted(a.meta.address for a in apps_by_type) == ["sync_app.api", "sync_app.web"]
+    assert sorted(a.meta.id for a in apps_by_type) == ["sync_app.api", "sync_app.web"]
     assert all(isinstance(a, SyncApp) for a in apps_by_type)
     assert sorted(a.image for a in apps) == ["httpd", "nginx"]
-    assert [d.meta.address for d in databases] == ["sync_database.postgres.main"]
+    assert [d.meta.id for d in databases] == ["sync_database.postgres.main"]
     assert isinstance(databases[0], SyncDatabase)
     assert len(everything) == 3
 

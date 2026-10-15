@@ -58,10 +58,10 @@ class _Resolved:
 def schema_for(cls: type, *, type_name: str, subtype: Optional[str] = None) -> dict[str, Any]:
     """The schema v1 document for ``cls``, a dataclass, as the block type ``type_name`` with an optional ``subtype``.
 
-    The base fields, ``meta``, ``disabled`` and ``depends_on``, are left out:
-    a class may declare them at its top level to receive the block's
-    metadata, disabled flag and dependencies, and a wrongly typed one raises
-    :class:`SchemaError`. Every other field becomes a schema field: ``str``, ``int``,
+    A top-level ``meta: Meta | None`` is left out: it receives the block's
+    metadata, its disabled flag and dependencies among it. ``meta``,
+    ``disabled`` and ``depends_on`` are held by every block, so any other
+    field by those names raises :class:`SchemaError`. Every other field becomes a schema field: ``str``, ``int``,
     ``float``, ``bool`` and ``Any`` are attributes; ``list[T]`` and
     ``dict[str, T]`` of those are list and map attributes; a dataclass is a
     nested block, ``list[Dataclass]`` a repeated block and
@@ -135,12 +135,11 @@ def _fields_of(cls: type, *, top: bool) -> list[dict[str, Any]]:
 
 
 def _is_base_field(owner: type, f: dataclasses.Field[Any], annotation: Any, options: FieldOptions) -> bool:
-    """Whether ``f``, a top-level field of ``owner``, is one of the base fields, checking its type.
+    """Whether ``f``, a top-level field of ``owner``, is the metadata field, refusing the reserved names.
 
     As in a Go plain struct, the metadata is the field called ``meta``, typed
-    ``Meta`` or ``Meta | None``, and the disabled flag and dependencies are
-    the fields whose configuration name is ``disabled``, a ``bool``, and
-    ``depends_on``, a ``list[str]``.
+    ``Meta`` or ``Meta | None``, and ``disabled`` and ``depends_on`` are read
+    through it, so no field may be configured by any of the three names.
     """
     from xcl._entity import Meta
 
@@ -152,16 +151,8 @@ def _is_base_field(owner: type, f: dataclasses.Field[Any], annotation: Any, opti
         if options.name:
             raise SchemaError(f"field {where}: the block's metadata is filled by xcl, not configuration, and takes no configuration name")
         return True
-    if name == "meta":
-        raise SchemaError(f"field {where}: \"meta\" is held by every block and cannot be declared")
-    if name == "disabled":
-        if annotation is not bool:
-            raise SchemaError(f"field {where}: \"disabled\" mirrors every block's disabled flag and must be a bool, not {_name(annotation)}")
-        return True
-    if name == "depends_on":
-        if get_origin(annotation) is not list or get_args(annotation) != (str,):
-            raise SchemaError(f"field {where}: \"depends_on\" mirrors every block's dependencies and must be a list[str], not {_name(annotation)}")
-        return True
+    if name in ("meta", "disabled", "depends_on"):
+        raise SchemaError(f"field {where}: \"{name}\" is held by every block and cannot be declared, the class reads it from meta")
     return False
 
 
@@ -505,8 +496,7 @@ def _hydrate_into(cls: type, data: dict[str, Any], meta_cls: Any) -> Any:
         options = options_of(f)
         key = options.name or f.name
         if meta_cls is not None and f.name == "meta":
-            raw = data.get("meta")
-            values["meta"] = meta_cls.from_json(raw) if isinstance(raw, dict) else None
+            values["meta"] = meta_cls.from_entity(data) if isinstance(data.get("meta"), dict) else None
             continue
         if f.name in labels:
             values[f.name] = labels[f.name]

@@ -50,8 +50,9 @@ class LocalRegistry:
         at ``app.web``; ``register_type(Database, "database", "postgres")``
         is written ``database "postgres" "main" {}`` and found at
         ``database.postgres.main``. The class needs no base class or
-        decorator; it may declare ``meta``, ``disabled`` and ``depends_on``
-        to receive them. A class that can read its label neither through
+        decorator; it may declare ``meta: xcl.Meta | None`` to receive the
+        block's metadata, ``meta.disabled`` and ``meta.depends_on`` among it,
+        and declares no field called ``disabled`` or ``depends_on``. A class that can read its label neither through
         ``meta`` nor through a field marked ``xcl.field(label=True)`` is a
         singleton: ``register_type(Runner, "runner")`` is written
         ``runner {}``, found at ``runner``, and takes no subtype. A class
