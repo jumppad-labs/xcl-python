@@ -109,12 +109,57 @@ def test_dict_of_int_is_map():
     assert _only_field(Block) == {"name": "counts", "type": {"map": "number"}, "format": "int"}
 
 
-def test_optional_union_none_is_optional():
+def test_optional_union_none_is_optional_and_nullable():
     @dataclass
     class Block:
         region: str | None
 
-    assert _only_field(Block) == {"name": "region", "type": "string", "optional": True}
+    assert _only_field(Block) == {"name": "region", "type": "string", "optional": True, "nullable": True}
+
+
+def test_default_without_none_is_optional_not_nullable():
+    @dataclass
+    class Block:
+        region: str = "eu"
+
+    assert _only_field(Block) == {"name": "region", "type": "string", "optional": True, "default": "eu"}
+
+
+def test_optional_object_attribute_is_nullable():
+    @dataclass
+    class Endpoint:
+        location: str
+
+    @dataclass
+    class Block:
+        database: Endpoint | None = field(block=False, default=None)
+
+    assert _only_field(Block) == {
+        "name": "database",
+        "type": {"object": [{"name": "location", "type": "string"}]},
+        "optional": True,
+        "nullable": True,
+    }
+
+
+def test_optional_block_is_not_marked_nullable():
+    @dataclass
+    class Health:
+        path: str
+
+    @dataclass
+    class Block:
+        health: Health | None = None
+
+    assert "nullable" not in _only_field(Block)
+
+
+def test_optional_sensitive_is_not_nullable():
+    @dataclass
+    class Block:
+        password: Sensitive[str] | None = None
+
+    assert _only_field(Block) == {"name": "password", "type": "string", "optional": True, "sensitive": True}
 
 
 def test_default_becomes_default():
@@ -132,7 +177,7 @@ def test_none_default_is_optional_without_default():
 
     doc = _only_field(Block)
 
-    assert doc == {"name": "region", "type": "string", "optional": True}
+    assert doc == {"name": "region", "type": "string", "optional": True, "nullable": True}
     assert "default" not in doc
 
 
@@ -168,7 +213,7 @@ def test_computed_is_computed_without_optional():
 
     doc = _only_field(Block)
 
-    assert doc == {"name": "endpoint", "type": "string", "computed": True}
+    assert doc == {"name": "endpoint", "type": "string", "computed": True, "nullable": True}
     assert "optional" not in doc
 
 
