@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from xcl import LocalRegistry, NotRegisteredError, SchemaError
+from xcl import LocalRegistry, Meta, NotRegisteredError, SchemaError
 from xcl._classes import ClassMap
 
 
@@ -16,6 +16,7 @@ class App:
 @dataclass
 class Database:
     version: str
+    meta: Meta | None = None
 
 
 @dataclass

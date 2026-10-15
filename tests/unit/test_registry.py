@@ -14,6 +14,7 @@ from xcl.registry import Registration
 class App:
     image: str
     replicas: int = 2
+    meta: Meta | None = None
 
 
 @dataclass

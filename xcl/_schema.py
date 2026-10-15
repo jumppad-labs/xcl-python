@@ -81,8 +81,32 @@ def schema_for(cls: type, *, type_name: str, subtype: Optional[str] = None) -> d
     doc: dict[str, Any] = {"schema_version": SCHEMA_VERSION, "type": type_name}
     if subtype:
         doc["subtype"] = subtype
+
+    labels = label_fields_of(cls)
+    if is_singleton(cls):
+        if subtype:
+            raise SchemaError(
+                f"{_name(cls)} has no label fields and no meta, so its block is written without labels, "
+                "and its type takes no subtype"
+            )
+        doc["singleton"] = True
+    elif labels and len(labels) != (2 if subtype else 1):
+        raise SchemaError(
+            f"{_name(cls)} has {len(labels)} label fields, a block of its type has {2 if subtype else 1} labels"
+        )
+
     doc["fields"] = _fields_of(cls, top=True)
     return doc
+
+
+def is_singleton(cls: type) -> bool:
+    """Whether ``cls`` is a singleton: a dataclass that cannot read a name.
+
+    One with neither a top-level ``meta`` field nor a field marked ``xcl.field(label=True)`` is written without labels,
+    ``runner {}``, and a module holds one of it, addressed by its type alone.
+    """
+    names = {f.name for f in dataclasses.fields(cls)}
+    return "meta" not in names and not label_fields_of(cls)
 
 
 def is_dataclass_itself(cls: Any) -> bool:
@@ -139,6 +163,11 @@ def _is_base_field(owner: type, f: dataclasses.Field[Any], annotation: Any, opti
             raise SchemaError(f"field {where}: \"depends_on\" mirrors every block's dependencies and must be a list[str], not {_name(annotation)}")
         return True
     return False
+
+
+def label_fields_of(cls: type) -> list[str]:
+    """The attributes of every field marked ``xcl.field(label=True)`` in ``cls``, in order."""
+    return [f.name for f in dataclasses.fields(cls) if options_of(f).label]
 
 
 def label_field_of(cls: type) -> Optional[tuple[str, str]]:
@@ -471,12 +500,16 @@ def _hydrate_into(cls: type, data: dict[str, Any], meta_cls: Any) -> Any:
     # whose fields called meta are ordinary fields
     hints = get_type_hints(cls, include_extras=True)
     values: dict[str, Any] = {}
+    labels = _labels_of(cls, data) if meta_cls is not None else {}
     for f in dataclasses.fields(cls):
         options = options_of(f)
         key = options.name or f.name
         if meta_cls is not None and f.name == "meta":
             raw = data.get("meta")
             values["meta"] = meta_cls.from_json(raw) if isinstance(raw, dict) else None
+            continue
+        if f.name in labels:
+            values[f.name] = labels[f.name]
             continue
         if key not in data:
             if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
@@ -486,6 +519,22 @@ def _hydrate_into(cls: type, data: dict[str, Any], meta_cls: Any) -> Any:
 
     instance = cls(**values)
     return instance
+
+
+def _labels_of(cls: type, data: dict[str, Any]) -> dict[str, str]:
+    """The values of an entity's label fields, from its labels as ``meta`` records them.
+
+    One label field holds the name, two the subtype and the name, as in Go.
+    Only the entity itself is read this way: a nested block's element has its
+    label field in its data, filled by the engine from the block's label.
+    """
+    meta = data.get("meta")
+    fields = label_fields_of(cls)
+    if not isinstance(meta, dict) or not fields:
+        return {}
+    if len(fields) == 2:
+        return {fields[0]: meta.get("subtype", ""), fields[1]: meta.get("name", "")}
+    return {fields[0]: meta.get("name", "")}
 
 
 def _hydrate_value(annotation: Any, value: Any, options: FieldOptions) -> Any:

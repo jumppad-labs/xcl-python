@@ -319,6 +319,58 @@ def test_non_string_map_key_is_refused():
         schema_for(Block, type_name="t")
 
 
+def test_dataclass_without_meta_or_label_is_singleton():
+    @dataclass
+    class Runner:
+        server: str
+
+    doc = schema_for(Runner, type_name="runner")
+
+    assert doc["singleton"] is True
+    assert doc["fields"] == [{"name": "server", "type": "string"}]
+
+
+def test_dataclass_with_meta_is_not_singleton():
+    @dataclass
+    class Agent:
+        model: str
+        meta: Meta | None = None
+
+    assert "singleton" not in schema_for(Agent, type_name="agent")
+
+
+def test_dataclass_with_label_field_is_not_singleton():
+    @dataclass
+    class Agent:
+        model: str
+        handle: str = field(label=True, default="")
+
+    doc = schema_for(Agent, type_name="agent")
+
+    assert "singleton" not in doc
+    assert doc["fields"] == [{"name": "model", "type": "string"}]
+
+
+def test_singleton_with_subtype_is_refused():
+    @dataclass
+    class Runner:
+        server: str
+
+    with pytest.raises(SchemaError, match="takes no subtype"):
+        schema_for(Runner, type_name="runner", subtype="big")
+
+
+def test_label_fields_must_match_the_labels():
+    @dataclass
+    class Agent:
+        model: str
+        kind: str = field(label=True, default="")
+        handle: str = field(label=True, default="")
+
+    with pytest.raises(SchemaError, match="2 label fields, a block of its type has 1 labels"):
+        schema_for(Agent, type_name="agent")
+
+
 def test_type_and_subtype_in_document():
     @dataclass
     class Database:

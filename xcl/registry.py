@@ -51,7 +51,11 @@ class LocalRegistry:
         is written ``database "postgres" "main" {}`` and found at
         ``database.postgres.main``. The class needs no base class or
         decorator; it may declare ``meta``, ``disabled`` and ``depends_on``
-        to receive them. A class that is not itself a dataclass, an empty
+        to receive them. A class that can read its label neither through
+        ``meta`` nor through a field marked ``xcl.field(label=True)`` is a
+        singleton: ``register_type(Runner, "runner")`` is written
+        ``runner {}``, found at ``runner``, and takes no subtype. A class
+        that is not itself a dataclass, an empty
         type name, or an annotation with no configuration form raises
         :class:`SchemaError` naming the class or field.
         """

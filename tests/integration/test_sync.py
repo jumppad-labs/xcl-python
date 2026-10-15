@@ -196,7 +196,7 @@ def test_plain_dataclass_through_whole_lifecycle(tmp_path):
         remaining = c.entity_count()
 
     assert isinstance(found, PlainApp)
-    assert found == PlainApp(image="nginx", replicas=3)
+    assert found == PlainApp(image="nginx", replicas=3, name="web")
     assert isinstance(diff, xcl.Diff)
     assert diff.summary.create == 0
     assert diff.summary.update == 0

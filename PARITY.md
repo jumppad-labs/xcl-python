@@ -61,6 +61,9 @@ with an unregistered `T` returns `ErrNotRegistered` in Go.
 |---|---|
 | `registry.NewLocal(registry.PluginPattern(p))` | `xcl.LocalRegistry(plugin_pattern=p)` |
 | `registry.Register[T](local, type, subtype)`, `local.RegisterType(prototype, type, subtype)` | `local.register_type(cls, type, subtype)` |
+| A label field, `xcl:"name,label"` | `xcl.field(label=True)` |
+| A `Meta` field, `types.Meta` | a `meta` field, an `xcl.Meta \| None` |
+| A plain struct with neither, a singleton | a dataclass with neither, a singleton |
 | `local.RegisterFunction(name, fn)` | `local.register_function(fn, name=None)` |
 | `local.RegisterExternalPlugin(path)` | `local.register_external_plugin(path)` |
 | `local.RegisterPluginDirectory(dir)` | `local.register_plugin_directory(dir)` |

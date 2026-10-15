@@ -66,10 +66,11 @@ class SyncDatabase:
 
 @dataclass
 class PlainApp:
-    """The plainest block type: no base, no decorator, no meta, disabled or depends_on."""
+    """The plainest named block type: no base, no decorator, no meta, disabled or depends_on, only its label."""
 
     image: str
     replicas: int = 1
+    name: str = xcl.field(label=True, default="")
 
 
 def registry() -> xcl.LocalRegistry:

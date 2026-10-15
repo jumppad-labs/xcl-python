@@ -29,6 +29,7 @@ class BasicTypesService:
     tags: list[str] | None = None
     labels: dict[str, str] | None = None
     upstream: str | None = None
+    meta: xcl.Meta | None = None
 
 
 # -- annotations --------------------------------------------------------------
@@ -61,6 +62,7 @@ class AnnotationsApp:
     health: AnnotationsHealth | None = None
     volume: list[AnnotationsVolume] = field(default_factory=list)
     listener: dict[str, AnnotationsListener] = field(default_factory=dict)
+    meta: xcl.Meta | None = None
 
 
 # -- functions ----------------------------------------------------------------
@@ -71,6 +73,7 @@ class FunctionsApp:
     name: str
     secret: xcl.Sensitive[str] | None = None
     token: xcl.Sensitive[str] | None = None
+    meta: xcl.Meta | None = None
 
 
 # -- variables ----------------------------------------------------------------
@@ -80,6 +83,7 @@ class FunctionsApp:
 class VariablesApp:
     region: str
     replicas: int | None = None
+    meta: xcl.Meta | None = None
 
 
 # -- outputs ------------------------------------------------------------------
@@ -89,6 +93,7 @@ class VariablesApp:
 class OutputsApp:
     region: str
     ports: list[int] | None = None
+    meta: xcl.Meta | None = None
 
 
 # -- invalid ------------------------------------------------------------------
@@ -98,6 +103,23 @@ class OutputsApp:
 class InvalidApp:
     image: str
     endpoint: xcl.Computed[str] = None
+    meta: xcl.Meta | None = None
+
+
+# -- singletons ---------------------------------------------------------------
+
+
+@dataclass
+class SingletonsRunner:
+    server: str
+    listen: str | None = None
+
+
+@dataclass
+class SingletonsAgent:
+    model: str
+    server: str | None = None
+    handle: str = xcl.field(label=True, default="")
 
 
 # FIXTURES maps a fixture directory's name to its types: (type, subtype, class),
@@ -110,6 +132,7 @@ FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
     "outputs": [("app", None, OutputsApp)],
     "plugin_entities": [],
     "invalid": [("app", None, InvalidApp)],
+    "singletons": [("runner", None, SingletonsRunner), ("agent", None, SingletonsAgent)],
 }
 
 

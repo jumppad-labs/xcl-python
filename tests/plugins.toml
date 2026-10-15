@@ -5,4 +5,4 @@
 # key published at https://xcl.dev/keys/jumppad-labs-releases.asc.
 [test]
 repository = "jumppad-labs/xcl-plugin-test"
-version = "v0.1.0"
+version = "v0.2.0"
