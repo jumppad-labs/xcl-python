@@ -21,21 +21,18 @@ from sync_entities import MemoryStore
 pytestmark = pytest.mark.usefixtures("engine")
 
 
-@xcl.entity("single_runner")
 @dataclass
 class Runner:
     server: str
     listen: str = ""
 
 
-@xcl.entity("single_agent")
 @dataclass
 class Agent:
     model: str
     handle: str = xcl.field(label=True, default="")
 
 
-@xcl.entity("single_database", "postgres")
 @dataclass
 class Database:
     version: str
@@ -48,11 +45,11 @@ class Endpoint:
     server: str
 
 
-@xcl.entity("single_client")
 @dataclass
-class Client(xcl.Resource):
+class Client:
     server: str
     runner: Endpoint = xcl.field(block=False)
+    meta: xcl.Meta | None = None
 
 
 @pytest.fixture(autouse=True)
@@ -69,10 +66,10 @@ def write_config(directory: Path, text: str) -> Path:
 
 def registry() -> xcl.LocalRegistry:
     found = xcl.LocalRegistry()
-    found.register_type(Runner)
-    found.register_type(Agent)
-    found.register_type(Database)
-    found.register_type(Client)
+    found.register_type(Runner, "single_runner")
+    found.register_type(Agent, "single_agent")
+    found.register_type(Database, "single_database", "postgres")
+    found.register_type(Client, "single_client")
     return found
 
 

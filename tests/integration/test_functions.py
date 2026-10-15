@@ -38,6 +38,7 @@ class App:
     name: str = ""
     secret: xcl.Sensitive[str] | None = None
     token: xcl.Sensitive[str] | None = None
+    meta: xcl.Meta | None = None
 
 
 @dataclass
@@ -45,6 +46,7 @@ class NumApp:
     """A config-only type with a numeric field filled in by a function call."""
 
     replicas: int = 0
+    meta: xcl.Meta | None = None
 
 
 class MemoryStore:
