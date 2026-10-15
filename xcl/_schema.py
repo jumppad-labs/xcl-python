@@ -206,6 +206,10 @@ def _field_doc(owner: type, f: dataclasses.Field[Any], annotation: Any, options:
         doc["computed"] = True
     elif optional:
         doc["optional"] = True
+    if resolved.optional and not resolved.sensitive:
+        # T | None: left out, the field is None, not an empty value; a
+        # sensitive value left out is empty, never null
+        doc["nullable"] = True
     if resolved.sensitive:
         doc["sensitive"] = True
 
