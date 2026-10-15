@@ -38,8 +38,6 @@ class App:
     volume: list[Volume] = field(default_factory=list)
     listener: dict[str, Listener] = field(default_factory=dict)
     meta: Meta | None = None
-    disabled: bool = False
-    depends_on: list[str] = field(default_factory=list)
 
 
 def _only_field(cls: type) -> dict[str, Any]:
@@ -262,13 +260,11 @@ def test_field_name_override():
     assert _only_field(Block) == {"name": "image", "type": "string"}
 
 
-def test_base_fields_not_listed():
+def test_meta_not_listed():
     @dataclass
     class Block:
         image: str
         meta: Meta | None = None
-        disabled: bool = False
-        depends_on: list[str] = field(default_factory=list)
 
     names = [f["name"] for f in schema_for(Block, type_name="t")["fields"]]
 
@@ -376,8 +372,6 @@ def test_type_and_subtype_in_document():
     class Database:
         version: str
         meta: Meta | None = None
-        disabled: bool = False
-        depends_on: list[str] = field(default_factory=list)
 
     doc = schema_for(Database, type_name="database", subtype="postgres")
 
@@ -409,48 +403,44 @@ def test_top_level_meta_typed_meta_without_none_is_not_listed():
     assert names == ["image"]
 
 
-def test_top_level_disabled_is_not_listed():
+def test_top_level_disabled_is_refused():
     @dataclass
     class Block:
         image: str
         disabled: bool = False
 
-    names = [f["name"] for f in schema_for(Block, type_name="t")["fields"]]
+    with pytest.raises(SchemaError, match=r"Block\.disabled.*\"disabled\" is held by every block.*reads it from meta"):
+        schema_for(Block, type_name="t")
 
-    assert names == ["image"]
 
-
-def test_top_level_depends_on_is_not_listed():
+def test_top_level_depends_on_is_refused():
     @dataclass
     class Block:
         image: str
         depends_on: list[str] = field(default_factory=list)
 
-    names = [f["name"] for f in schema_for(Block, type_name="t")["fields"]]
+    with pytest.raises(SchemaError, match=r"Block\.depends_on.*\"depends_on\" is held by every block.*reads it from meta"):
+        schema_for(Block, type_name="t")
 
-    assert names == ["image"]
 
-
-def test_field_renamed_to_disabled_is_not_listed():
+def test_field_renamed_to_disabled_is_refused():
     @dataclass
     class Block:
         image: str
         is_off: bool = field(name="disabled", default=False)
 
-    names = [f["name"] for f in schema_for(Block, type_name="t")["fields"]]
+    with pytest.raises(SchemaError, match=r"Block\.is_off.*\"disabled\" is held by every block"):
+        schema_for(Block, type_name="t")
 
-    assert names == ["image"]
 
-
-def test_field_renamed_to_depends_on_is_not_listed():
+def test_field_renamed_to_depends_on_is_refused():
     @dataclass
     class Block:
         image: str
         after: list[str] = field(name="depends_on", default_factory=list)
 
-    names = [f["name"] for f in schema_for(Block, type_name="t")["fields"]]
-
-    assert names == ["image"]
+    with pytest.raises(SchemaError, match=r"Block\.after.*\"depends_on\" is held by every block"):
+        schema_for(Block, type_name="t")
 
 
 def test_nested_block_lists_base_field_names_as_ordinary_fields():
@@ -483,42 +473,6 @@ def test_top_level_meta_of_wrong_type_is_refused():
         meta: str = ""
 
     with pytest.raises(SchemaError, match=r"Block\.meta.*must be an xcl\.Meta \| None"):
-        schema_for(Block, type_name="t")
-
-
-def test_top_level_disabled_of_wrong_type_is_refused():
-    @dataclass
-    class Block:
-        disabled: str = ""
-
-    with pytest.raises(SchemaError, match=r"Block\.disabled.*must be a bool"):
-        schema_for(Block, type_name="t")
-
-
-def test_top_level_optional_disabled_is_refused():
-    @dataclass
-    class Block:
-        disabled: bool | None = None
-
-    with pytest.raises(SchemaError, match=r"Block\.disabled.*must be a bool"):
-        schema_for(Block, type_name="t")
-
-
-def test_top_level_depends_on_of_wrong_type_is_refused():
-    @dataclass
-    class Block:
-        depends_on: list[int] = field(default_factory=list)
-
-    with pytest.raises(SchemaError, match=r"Block\.depends_on.*must be a list\[str\]"):
-        schema_for(Block, type_name="t")
-
-
-def test_field_renamed_to_disabled_of_wrong_type_is_refused():
-    @dataclass
-    class Block:
-        is_off: str = field(name="disabled", default="")
-
-    with pytest.raises(SchemaError, match=r"Block\.is_off.*must be a bool"):
         schema_for(Block, type_name="t")
 
 

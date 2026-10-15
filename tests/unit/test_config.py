@@ -106,7 +106,7 @@ def test_untyped_find_returns_registered_class_for_subtype():
 
     assert isinstance(found, Database)
     assert found.version == "16"
-    assert found.meta.address == "database.postgres.main"
+    assert found.meta.id == "database.postgres.main"
 
 
 def test_untyped_find_of_unregistered_type_returns_generic_entity():
@@ -116,7 +116,7 @@ def test_untyped_find_of_unregistered_type_returns_generic_entity():
     found = config.find(None, "cache.redis")
 
     assert isinstance(found, xcl.Entity)
-    assert found.meta.address == "cache.redis"
+    assert found.meta.id == "cache.redis"
     assert found.size == 64
 
 
@@ -129,7 +129,7 @@ def test_entities_return_registered_classes_and_generic_entities():
     assert len(found) == 2
     assert found[0] == App(image="nginx", meta=xcl.Meta(id="app.web", name="web", type="app"))
     assert isinstance(found[1], xcl.Entity)
-    assert found[1].meta.address == "cache.redis"
+    assert found[1].meta.id == "cache.redis"
 
 
 def test_untyped_find_by_type_returns_registered_class():

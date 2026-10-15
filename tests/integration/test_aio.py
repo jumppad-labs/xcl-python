@@ -278,7 +278,7 @@ def test_async_event_entity_is_configs_class(tmp_path):
     assert len(entities) == 1
     assert isinstance(entities[0], App)
     assert entities[0].name == "web"
-    assert entities[0].meta.address == "aio_app.web"
+    assert entities[0].meta.id == "aio_app.web"
 
 
 # -- state stores -----------------------------------------------------------
@@ -513,11 +513,11 @@ def test_lookups_are_awaitable(tmp_path):
 
     got = asyncio.run(main())
 
-    assert sorted(e.meta.address for e in got["entities"]) == ["aio_app.api", "aio_app.web", "aio_db.main", "output.image"]
+    assert sorted(e.meta.id for e in got["entities"]) == ["aio_app.api", "aio_app.web", "aio_db.main", "output.image"]
     assert got["entity_count"] == 4
     assert isinstance(got["find"], App)
     assert got["find"].name == "web"
-    assert sorted(a.meta.address for a in got["find_by_type"]) == ["aio_app.api", "aio_app.web"]
+    assert sorted(a.meta.id for a in got["find_by_type"]) == ["aio_app.api", "aio_app.web"]
     assert isinstance(got["find_one"], Db)
     assert got["find_one"].version == "15"
     assert sorted(a.image for a in got["all"]) == ["httpd", "nginx"]

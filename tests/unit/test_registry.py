@@ -21,8 +21,6 @@ class App:
 class Database:
     version: str
     meta: Meta | None = None
-    disabled: bool = False
-    depends_on: list[str] = field(default_factory=list)
 
 
 APP_SCHEMA = {
@@ -190,21 +188,21 @@ def test_local_registry_refuses_meta_of_wrong_type():
         LocalRegistry().register_type(Block, "block")
 
 
-def test_local_registry_refuses_disabled_of_wrong_type():
+def test_local_registry_refuses_disabled():
     @dataclass
     class Block:
-        disabled: int = 0
+        disabled: bool = False
 
-    with pytest.raises(SchemaError, match=r"Block\.disabled.*must be a bool"):
+    with pytest.raises(SchemaError, match=r"Block\.disabled.*\"disabled\" is held by every block"):
         LocalRegistry().register_type(Block, "block")
 
 
-def test_local_registry_refuses_depends_on_of_wrong_type():
+def test_local_registry_refuses_depends_on():
     @dataclass
     class Block:
-        depends_on: str = ""
+        depends_on: list[str] = field(default_factory=list)
 
-    with pytest.raises(SchemaError, match=r"Block\.depends_on.*must be a list\[str\]"):
+    with pytest.raises(SchemaError, match=r"Block\.depends_on.*\"depends_on\" is held by every block"):
         LocalRegistry().register_type(Block, "block")
 
 

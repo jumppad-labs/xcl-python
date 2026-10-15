@@ -14,7 +14,12 @@ from typing import Any
 
 @dataclasses.dataclass
 class Meta:
-    """What the engine records about every entity: its address and where it was declared."""
+    """What the engine records about every entity: its address and where it was declared.
+
+    ``id`` is the entity's address, such as ``module.db.app.web``.
+    ``disabled`` and ``depends_on`` are what configuration set on the block,
+    which every block takes, so a class never declares them itself.
+    """
 
     id: str = ""
     name: str = ""
@@ -24,56 +29,50 @@ class Meta:
     file: str = ""
     line: int = 0
     column: int = 0
+    disabled: bool = False
+    depends_on: list[str] = dataclasses.field(default_factory=list)
     status: str = ""
     links: list[str] = dataclasses.field(default_factory=list)
     references: dict[str, str] = dataclasses.field(default_factory=dict)
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @classmethod
-    def from_json(cls, data: Mapping[str, Any]) -> Meta:
-        """A ``Meta`` from the entity JSON's ``meta`` object; unknown keys are kept in ``extra``."""
-        known = {f.name for f in dataclasses.fields(cls)} - {"extra"}
+    def from_entity(cls, data: Mapping[str, Any]) -> Meta:
+        """A ``Meta`` from an entity's JSON: its ``meta`` object, unknown keys kept in ``extra``, and its ``disabled`` and ``depends_on``."""
+        raw = data.get("meta")
+        known = {f.name for f in dataclasses.fields(cls)} - {"extra", "disabled", "depends_on"}
         values: dict[str, Any] = {}
         extra: dict[str, Any] = {}
-        for key, value in data.items():
+        for key, value in (raw.items() if isinstance(raw, Mapping) else ()):
             if key in known:
                 values[key] = value
             else:
                 extra[key] = value
         meta = cls(**values)
         meta.extra = extra
+        meta.disabled = bool(data.get("disabled") or False)
+        meta.depends_on = list(data.get("depends_on") or [])
         return meta
-
-    @property
-    def address(self) -> str:
-        """The entity's address, its ``id``."""
-        return self.id
 
 
 class Entity(Mapping[str, Any]):
     """An entity of a type no class was registered for, such as a Go plugin's.
 
     It is a read-only mapping of the entity's JSON: attributes are read by
-    name, ``entity["image"]`` or ``entity.image``, ``meta`` is its
-    :class:`Meta` and ``address`` its address.
+    name, ``entity["image"]`` or ``entity.image``, and ``meta`` is its
+    :class:`Meta`, ``meta.id`` its address.
     """
 
     __slots__ = ("_data", "_meta")
 
     def __init__(self, data: Mapping[str, Any]) -> None:
         self._data = dict(data)
-        raw = self._data.get("meta")
-        self._meta = Meta.from_json(raw) if isinstance(raw, Mapping) else Meta()
+        self._meta = Meta.from_entity(self._data)
 
     @property
     def meta(self) -> Meta:
         """What the engine recorded about the entity: its address and where it was declared."""
         return self._meta
-
-    @property
-    def address(self) -> str:
-        """The entity's address, such as ``docker.network.main``."""
-        return self._meta.id
 
     def __getitem__(self, key: str) -> Any:
         return self._data[key]

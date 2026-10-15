@@ -68,7 +68,7 @@ def test_entity_is_the_class_registered_on_the_map():
 
     assert type(entity) is App
     assert entity.image == "nginx"
-    assert entity.meta.address == "app.web"
+    assert entity.meta.id == "app.web"
     assert entity.meta.name == "web"
     assert entity.meta.type == "app"
 
@@ -79,7 +79,7 @@ def test_entity_of_type_not_on_the_map_is_generic_entity():
     entity = event.entity()
 
     assert type(entity) is xcl.Entity
-    assert entity.address == "cache.redis"
+    assert entity.meta.id == "cache.redis"
 
 
 def test_entity_of_event_built_by_hand_is_generic_entity():
@@ -94,7 +94,7 @@ def test_entity_of_event_built_by_hand_is_generic_entity():
     entity = event.entity()
 
     assert type(entity) is xcl.Entity
-    assert entity.address == "app.web"
+    assert entity.meta.id == "app.web"
 
 
 def test_entity_of_event_without_data_is_none():
@@ -179,7 +179,7 @@ def test_sync_config_delivers_event_entity_as_registered_class():
     entity = received[0].entity()
     assert type(entity) is App
     assert entity.image == "nginx"
-    assert entity.meta.address == "app.web"
+    assert entity.meta.id == "app.web"
 
 
 def test_sync_config_delivers_event_entity_of_unregistered_type_as_generic_entity():
@@ -208,7 +208,7 @@ def test_asyncio_config_delivers_event_entity_as_registered_class():
     entity = received[0].entity()
     assert type(entity) is App
     assert entity.image == "nginx"
-    assert entity.meta.address == "app.web"
+    assert entity.meta.id == "app.web"
 
 
 def test_asyncio_config_delivers_event_entity_of_unregistered_type_as_generic_entity():

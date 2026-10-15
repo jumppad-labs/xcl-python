@@ -90,7 +90,7 @@ def test_hydrate_registered_class():
     app = hydrate(app_json(), registry=classes())
 
     assert isinstance(app, App)
-    assert app.meta.address == "hydrate_app.web"
+    assert app.meta.id == "hydrate_app.web"
     assert app.meta.line == 2
     assert app.meta.column == 1
     assert app.meta.file == "/f"
@@ -174,7 +174,7 @@ def test_type_with_no_registered_class_becomes_entity():
     found = hydrate(data, registry=classes())
 
     assert isinstance(found, Entity)
-    assert found.address == "hydrate_unregistered.main"
+    assert found.meta.id == "hydrate_unregistered.main"
     assert found.meta.subtype == "plugin"
 
 
@@ -225,7 +225,7 @@ def test_hydrate_subtype_class_by_meta():
     database = hydrate(data, registry=classes())
 
     assert isinstance(database, Database)
-    assert database.meta.address == "hydrate_database.postgres.main"
+    assert database.meta.id == "hydrate_database.postgres.main"
     assert database.meta.type == "hydrate_database"
     assert database.meta.subtype == "postgres"
     assert database.version == "16"
@@ -239,7 +239,7 @@ def test_untyped_hydrate_without_registry_becomes_entity():
     found = hydrate(app_json())
 
     assert isinstance(found, Entity)
-    assert found.meta.address == "hydrate_app.web"
+    assert found.meta.id == "hydrate_app.web"
     assert found.image == "nginx"
 
 
@@ -261,7 +261,7 @@ def test_top_level_meta_field_is_filled_as_meta():
     team = hydrate(data, registry=classes())
 
     assert isinstance(team.meta, Meta)
-    assert team.meta.address == "hydrate_team.core"
+    assert team.meta.id == "hydrate_team.core"
 
 
 def test_nested_block_meta_field_stays_an_ordinary_value():
