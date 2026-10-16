@@ -426,11 +426,20 @@ class Normaliser:
 
     def text(self, text: str) -> str:
         """Replace the fixture and temporary directories wherever they appear."""
-        for directory in (self.fixture, self.fixture.replace(os.sep, "/")):
+        for directory in _dir_forms(self.fixture):
             text = text.replace(directory, "<fixture>")
-        for directory in (self.tmp, self.tmp.replace(os.sep, "/")):
+        for directory in _dir_forms(self.tmp):
             text = text.replace(directory, "<tmp>")
         return text
+
+
+def _dir_forms(directory: str) -> tuple[str, str, str]:
+    """The ways a directory appears in the record, as the Go program's dirForms lists them.
+
+    As it is, with forward slashes, and with each backslash doubled, as
+    configuration text writes a Windows path inside a quoted string.
+    """
+    return (directory.replace("\\", "\\\\"), directory, directory.replace(os.sep, "/"))
 
 
 def _first(err: xcl.Error, matches: Callable[[xcl.Error], bool]) -> Optional[xcl.Error]:
