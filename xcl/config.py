@@ -12,7 +12,7 @@ from xcl._client import Client, default_client
 from xcl._core import core_pb2
 from xcl._classes import ClassMap
 from xcl._poll import Handlers, Operation, StateStore, drive
-from xcl._schema import hydrate
+from xcl._schema import hydrate, record_bytes
 from xcl.diff import Diff
 from xcl.events import Event
 from xcl.mask import Mask
@@ -210,9 +210,79 @@ class Config:
         response = self._client.call(self._open(), "Outputs", core_pb2.OutputsRequest())
         return json.loads(response.outputs_json) if response.outputs_json else {}
 
-    def encode_saved_entity(self, data: bytes, *, highlight: bool = False) -> str:
-        """A saved record rendered as configuration text, coloured for a terminal when ``highlight``."""
-        response = self._client.call(self._open(), "EncodeSavedEntity", core_pb2.EncodeSavedEntityRequest(entity=bytes(data), highlight=highlight))
+    def encode_entity(
+        self,
+        entity: object,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        highlight: bool = False,
+    ) -> str:
+        """An entity rendered as configuration text, the same text Go's ``xcl.EncodeEntity`` writes.
+
+        ``entity`` is an instance of a class registered on this
+        configuration, whether returned by a lookup, carried by an event or
+        built by hand, or the :class:`xcl.Entity` a lookup returns for a type
+        with no class. Changes made to a looked-up entity show in the text.
+        The text is one block, ``<type> "<subtype>" "<name>"`` or
+        ``<type> "<name>"``. Every choice is off by default:
+
+        - ``include_computed`` also writes the fields a provider filled in.
+        - ``include_empty`` also writes attributes that are unset or at their
+          zero value.
+        - ``reveal_sensitive`` writes each sensitive value as its real value
+          rather than ``(sensitive)``. A looked-up entity holds only the
+          marker, so the engine shows its own configured value, found by the
+          entity's ``meta.id``; a value the entity holds for real, such as an
+          edit or one set by hand, is shown as it is.
+        - ``show_references`` writes each field that referred to another
+          entity as the configuration wrote it, rather than its value.
+        - ``highlight`` colours the text for a terminal, as
+          :meth:`encode_saved_entity` does.
+
+        Raises :class:`xcl.NotEncodableError` for a value that is not an
+        entity, a variable, output or module, or a value with no
+        configuration form, :class:`xcl.NotRegisteredError` for an instance
+        of a class this configuration did not register, and
+        :class:`xcl.OperationInProgressError` while an operation runs.
+        """
+        request = core_pb2.EncodeEntityRequest(
+            entity=record_bytes(entity, self._classes),
+            highlight=highlight,
+            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        )
+        response = self._client.call(self._open(), "EncodeEntity", request)
+        return response.text.decode()
+
+    def encode_saved_entity(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        highlight: bool = False,
+    ) -> str:
+        """A saved record, as state stores it and events carry it, rendered as configuration text.
+
+        The text is the same :meth:`encode_entity` writes for the same
+        entity, with the same choices, all off by default:
+        ``include_computed`` also writes the fields a provider filled in,
+        ``include_empty`` the attributes that are unset or at their zero
+        value, ``reveal_sensitive`` each sensitive value the record holds
+        for real rather than ``(sensitive)``, and ``show_references`` each
+        field that referred to another entity as the configuration wrote
+        it. ``highlight`` colours the text for a terminal.
+        """
+        request = core_pb2.EncodeSavedEntityRequest(
+            entity=bytes(data),
+            highlight=highlight,
+            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        )
+        response = self._client.call(self._open(), "EncodeSavedEntity", request)
         return response.text.decode()
 
     def _hydrate(self, data: bytes, cls: Optional[type]) -> Any:
@@ -227,6 +297,16 @@ class Config:
                     details={"address": meta.get("id", ""), "want": ".".join(filter(None, want)), "got": ".".join(filter(None, got))},
                 )
         return hydrate(decoded, cls, registry=self._classes)
+
+
+def _encode_options(include_computed: bool, include_empty: bool, reveal_sensitive: bool, show_references: bool) -> core_pb2.EncodeOptions:
+    """The encoding choices as the engine reads them, the four options of Go's encoder."""
+    return core_pb2.EncodeOptions(
+        include_computed=include_computed,
+        include_empty=include_empty,
+        reveal_sensitive=reveal_sensitive,
+        show_references=show_references,
+    )
 
 
 def _paths(paths: Iterable[str | os.PathLike[str]]) -> list[str]:

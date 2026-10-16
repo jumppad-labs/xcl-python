@@ -1,10 +1,13 @@
 """Config creation and release, against the fake transport."""
 
+import asyncio
+import json
 from dataclasses import dataclass
 
 import pytest
 
 import xcl
+import xcl.aio
 from xcl import Meta
 from xcl._client import Client
 from xcl._core import core_pb2
@@ -266,3 +269,271 @@ def test_class_registered_twice_across_registries_is_refused_at_creation():
         xcl.Config(registries=[first, second], client=Client(transport))
 
     assert "CreateConfig" not in transport.methods_called()
+
+
+ENCODED_TEXT = b'app "web" {\n  image = "nginx"\n}\n'
+SAVED_RECORD = b'{"meta": {"id": "app.web", "name": "web", "type": "app"}, "image": "nginx"}'
+
+
+def encode_transport() -> FakeTransport:
+    return FakeTransport(
+        {
+            "EncodeEntity": core_pb2.EncodeEntityResponse(text=ENCODED_TEXT),
+            "EncodeSavedEntity": core_pb2.EncodeSavedEntityResponse(text=ENCODED_TEXT),
+        }
+    )
+
+
+def sent_encode_entity_request(transport: FakeTransport) -> core_pb2.EncodeEntityRequest:
+    handle, method, request = transport.calls[-1]
+    assert handle == 7
+    assert method == "EncodeEntity"
+    return core_pb2.EncodeEntityRequest.FromString(request)
+
+
+def sent_encode_saved_entity_request(transport: FakeTransport) -> core_pb2.EncodeSavedEntityRequest:
+    handle, method, request = transport.calls[-1]
+    assert handle == 7
+    assert method == "EncodeSavedEntity"
+    return core_pb2.EncodeSavedEntityRequest.FromString(request)
+
+
+def hand_built_app() -> App:
+    return App(image="nginx", meta=xcl.Meta(name="web"))
+
+
+def test_encode_entity_sends_record_and_highlight():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    text = config.encode_entity(hand_built_app(), highlight=True)
+
+    assert text == 'app "web" {\n  image = "nginx"\n}\n'
+    request = sent_encode_entity_request(transport)
+    assert json.loads(request.entity) == {"meta": {"type": "app", "name": "web"}, "image": "nginx"}
+    assert request.highlight is True
+
+
+def test_encode_entity_sends_highlight_off_by_default():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_entity(hand_built_app())
+
+    request = sent_encode_entity_request(transport)
+    assert request.highlight is False
+
+
+def test_encode_entity_sends_include_computed():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_entity(hand_built_app(), include_computed=True)
+
+    options = sent_encode_entity_request(transport).options
+    assert options.include_computed is True
+    assert options.include_empty is False
+    assert options.reveal_sensitive is False
+    assert options.show_references is False
+
+
+def test_encode_entity_sends_include_empty():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_entity(hand_built_app(), include_empty=True)
+
+    options = sent_encode_entity_request(transport).options
+    assert options.include_computed is False
+    assert options.include_empty is True
+    assert options.reveal_sensitive is False
+    assert options.show_references is False
+
+
+def test_encode_entity_sends_reveal_sensitive():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_entity(hand_built_app(), reveal_sensitive=True)
+
+    options = sent_encode_entity_request(transport).options
+    assert options.include_computed is False
+    assert options.include_empty is False
+    assert options.reveal_sensitive is True
+    assert options.show_references is False
+
+
+def test_encode_entity_sends_show_references():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_entity(hand_built_app(), show_references=True)
+
+    options = sent_encode_entity_request(transport).options
+    assert options.include_computed is False
+    assert options.include_empty is False
+    assert options.reveal_sensitive is False
+    assert options.show_references is True
+
+
+def test_encode_entity_default_options_all_off():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_entity(hand_built_app())
+
+    options = sent_encode_entity_request(transport).options
+    assert options.include_computed is False
+    assert options.include_empty is False
+    assert options.reveal_sensitive is False
+    assert options.show_references is False
+
+
+def test_encode_entity_not_an_entity_makes_no_call():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    with pytest.raises(xcl.NotEncodableError):
+        config.encode_entity(None)
+
+    assert "EncodeEntity" not in transport.methods_called()
+
+
+def test_encode_entity_unregistered_class_makes_no_call():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    with pytest.raises(xcl.NotRegisteredError, match="Unregistered is not registered"):
+        config.encode_entity(Unregistered(name="stray"))
+
+    assert "EncodeEntity" not in transport.methods_called()
+
+
+def test_encode_saved_entity_sends_record_and_highlight():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    text = config.encode_saved_entity(SAVED_RECORD, highlight=True)
+
+    assert text == 'app "web" {\n  image = "nginx"\n}\n'
+    request = sent_encode_saved_entity_request(transport)
+    assert request.entity == SAVED_RECORD
+    assert request.highlight is True
+
+
+def test_encode_saved_entity_sends_include_computed():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_saved_entity(SAVED_RECORD, include_computed=True)
+
+    options = sent_encode_saved_entity_request(transport).options
+    assert options.include_computed is True
+    assert options.include_empty is False
+    assert options.reveal_sensitive is False
+    assert options.show_references is False
+
+
+def test_encode_saved_entity_sends_include_empty():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_saved_entity(SAVED_RECORD, include_empty=True)
+
+    options = sent_encode_saved_entity_request(transport).options
+    assert options.include_computed is False
+    assert options.include_empty is True
+    assert options.reveal_sensitive is False
+    assert options.show_references is False
+
+
+def test_encode_saved_entity_sends_reveal_sensitive():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_saved_entity(SAVED_RECORD, reveal_sensitive=True)
+
+    options = sent_encode_saved_entity_request(transport).options
+    assert options.include_computed is False
+    assert options.include_empty is False
+    assert options.reveal_sensitive is True
+    assert options.show_references is False
+
+
+def test_encode_saved_entity_sends_show_references():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_saved_entity(SAVED_RECORD, show_references=True)
+
+    options = sent_encode_saved_entity_request(transport).options
+    assert options.include_computed is False
+    assert options.include_empty is False
+    assert options.reveal_sensitive is False
+    assert options.show_references is True
+
+
+def test_encode_saved_entity_default_options_all_off():
+    transport = encode_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config.encode_saved_entity(SAVED_RECORD)
+
+    request = sent_encode_saved_entity_request(transport)
+    assert request.highlight is False
+    assert request.options.include_computed is False
+    assert request.options.include_empty is False
+    assert request.options.reveal_sensitive is False
+    assert request.options.show_references is False
+
+
+def test_aio_encode_entity_sends_options():
+    transport = encode_transport()
+    texts: list[str] = []
+
+    async def run() -> None:
+        config = xcl.aio.Config(registries=[app_registry()], client=Client(transport))
+        try:
+            texts.append(
+                await config.encode_entity(
+                    hand_built_app(),
+                    include_computed=True,
+                    include_empty=True,
+                    reveal_sensitive=True,
+                    show_references=True,
+                    highlight=True,
+                )
+            )
+        finally:
+            await config.close()
+
+    asyncio.run(run())
+
+    assert texts == ['app "web" {\n  image = "nginx"\n}\n']
+    encode_calls = [call for call in transport.calls if call[1] == "EncodeEntity"]
+    assert len(encode_calls) == 1
+    handle, _, raw = encode_calls[0]
+    assert handle == 7
+    request = core_pb2.EncodeEntityRequest.FromString(raw)
+    assert json.loads(request.entity) == {"meta": {"type": "app", "name": "web"}, "image": "nginx"}
+    assert request.highlight is True
+    assert request.options.include_computed is True
+    assert request.options.include_empty is True
+    assert request.options.reveal_sensitive is True
+    assert request.options.show_references is True
+
+
+def test_aio_encode_entity_not_an_entity_makes_no_call():
+    transport = encode_transport()
+
+    async def run() -> None:
+        config = xcl.aio.Config(registries=[app_registry()], client=Client(transport))
+        try:
+            await config.encode_entity(None)
+        finally:
+            await config.close()
+
+    with pytest.raises(xcl.NotEncodableError):
+        asyncio.run(run())
+
+    assert "EncodeEntity" not in transport.methods_called()

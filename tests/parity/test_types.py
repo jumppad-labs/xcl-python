@@ -54,3 +54,7 @@ def test_invalid_types_match_fixture(parity_fixtures):
 
 def test_singletons_types_match_fixture(parity_fixtures):
     assert _derived("singletons") == _documents(parity_fixtures, "singletons")
+
+
+def test_encode_types_match_fixture(parity_fixtures):
+    assert _derived("encode") == _documents(parity_fixtures, "encode")

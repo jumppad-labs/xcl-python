@@ -15,9 +15,10 @@ import inspect
 import json
 import types
 import typing
+import weakref
 from typing import Any, Optional, Union, get_args, get_origin, get_type_hints
 
-from xcl._errors import Error
+from xcl._errors import Error, NotEncodableError
 from xcl._types import COMPUTED, SENSITIVE_MARKER, FieldOptions, Sensitive, options_of
 
 if typing.TYPE_CHECKING:
@@ -487,7 +488,27 @@ def hydrate(data: Any, cls: Optional[type] = None, *, registry: Optional[ClassMa
     if cls is None:
         return Entity(data)
 
-    return _hydrate_into(cls, data, Meta)
+    instance = _hydrate_into(cls, data, Meta)
+    _remember_source(instance, data)
+    return instance
+
+
+# _sources holds, by id, the JSON each entity was hydrated from, for as long
+# as the entity lives. record_of reads it back, so a field left as hydration
+# set it is encoded exactly as the engine wrote it: a list the configuration
+# never set stays unset rather than becoming [], and a dataclass default
+# stays out of the text
+_sources: dict[int, dict[str, Any]] = {}
+
+
+def _remember_source(instance: Any, data: dict[str, Any]) -> None:
+    try:
+        weakref.finalize(instance, _sources.pop, id(instance), None)
+    except TypeError:
+        # an instance that cannot be referenced weakly, such as one of a
+        # slotted dataclass without __weakref__, keeps no source
+        return
+    _sources[id(instance)] = data
 
 
 def _hydrate_into(cls: type, data: dict[str, Any], meta_cls: Any) -> Any:
@@ -571,6 +592,179 @@ def _sensitive_of(value: Any) -> Sensitive[Any]:
     if isinstance(value, dict) and "xcl_masked" in value:
         return Sensitive.redacted()
     return Sensitive(value)
+
+
+# ---------------------------------------------------------------------------
+# entity records, the mirror of hydration
+
+
+def record_of(entity: object, classes: ClassMap) -> dict[str, Any]:
+    """An entity's JSON as the engine reads it, the mirror of :func:`hydrate`.
+
+    ``entity`` is an instance of a dataclass registered on the configuration
+    ``classes`` belongs to, looked up, taken from an event or built by hand,
+    or an :class:`Entity`, whose JSON it already holds. The type and subtype
+    come from the registration, the name from the label fields, or from
+    ``meta.name`` for a class without one, and ``meta``, ``disabled`` and
+    ``depends_on`` from the instance's :class:`Meta`, or from the JSON it was
+    hydrated from when it has none. Fields are written under their schema
+    names, nested blocks with their label fields as keys, a
+    :class:`Sensitive` as its real value or as the marker when it holds none,
+    and a field holding ``None`` is left out.
+
+    An entity hydrated from the engine's JSON is written from that JSON
+    wherever a field still holds what hydration set, so the engine reads
+    back exactly what it wrote, and from the instance wherever a field was
+    changed since.
+
+    Raises :class:`xcl.NotEncodableError` for a value that is not an entity
+    and for a named entity with no name, and :class:`xcl.NotRegisteredError`
+    for an instance of a class the configuration did not register.
+    """
+    from xcl._entity import Entity, Meta
+
+    if isinstance(entity, Entity):
+        return entity.to_dict()
+
+    if not dataclasses.is_dataclass(entity) or isinstance(entity, type):
+        raise _not_encodable(f"a value of type {type(entity).__name__}", "it is not an entity")
+
+    cls = type(entity)
+    type_name, subtype = classes.names_of(cls)
+
+    source = _sources.get(id(entity))
+    held = getattr(entity, "meta", None) if "meta" in {f.name for f in dataclasses.fields(cls)} else None
+    if isinstance(held, Meta):
+        meta: dict[str, Any] = held.to_record()
+    elif source is not None and isinstance(source.get("meta"), dict):
+        meta = dict(source["meta"])
+    else:
+        meta = {}
+    meta["type"] = type_name
+    meta.pop("subtype", None)
+    if subtype:
+        meta["subtype"] = subtype
+
+    # one label field holds the name, two the subtype and the name, as
+    # hydration reads them; the registration is what names the subtype
+    labels = label_fields_of(cls)
+    name = getattr(entity, labels[-1]) if labels else meta.get("name", "")
+    meta.pop("name", None)
+    if name:
+        meta["name"] = name
+    elif not is_singleton(cls):
+        raise _not_encodable(
+            f"a {_dotted_name(type_name, subtype)} entity", "it has no name; set its label field or meta.name"
+        )
+
+    record: dict[str, Any] = {"meta": meta}
+    if isinstance(held, Meta):
+        if held.disabled:
+            record["disabled"] = True
+        if held.depends_on:
+            record["depends_on"] = list(held.depends_on)
+    elif source is not None:
+        if source.get("disabled"):
+            record["disabled"] = True
+        if source.get("depends_on"):
+            record["depends_on"] = list(source["depends_on"])
+    record.update(_record_into(entity, source, top=True))
+    return record
+
+
+def record_bytes(entity: object, classes: ClassMap) -> bytes:
+    """The entity's JSON from :func:`record_of`, serialised for the engine.
+
+    Raises :class:`xcl.NotEncodableError` as :func:`record_of` does, and for
+    an entity holding a value JSON cannot write.
+    """
+    record = record_of(entity, classes)
+    try:
+        return json.dumps(record).encode()
+    except (TypeError, ValueError) as err:
+        raise _not_encodable(
+            f"a value of type {type(entity).__name__}", "it holds a value with no configuration form"
+        ) from err
+
+
+def _record_into(instance: Any, source: Optional[dict[str, Any]], *, top: bool) -> dict[str, Any]:
+    # the mirror of _hydrate_into: top is the entity itself, whose meta field
+    # and label fields are written into meta, and a nested block's label
+    # fields are ordinary keys. source is the JSON the instance was hydrated
+    # from, or None for one built by hand
+    cls = type(instance)
+    hints = get_type_hints(cls, include_extras=True)
+    labels = set(label_fields_of(cls)) if top else set()
+    data: dict[str, Any] = {}
+    for f in dataclasses.fields(instance):
+        if top and (f.name == "meta" or f.name in labels):
+            continue
+        options = options_of(f)
+        key = options.name or f.name
+        value = getattr(instance, f.name)
+        if source is not None:
+            # a field still holding what hydration set is written as the
+            # engine wrote it, and one hydration filled in is left out
+            if key in source and _unchanged(hints.get(f.name, f.type), source[key], options, value):
+                data[key] = source[key]
+                continue
+            if key not in source and _equal(value, _hydrated_default(f)):
+                continue
+        if value is None:
+            continue
+        data[key] = _record_value(value, source.get(key) if source is not None else None)
+    return data
+
+
+def _record_value(value: Any, source: Any = None) -> Any:
+    # the mirror of _hydrate_value, read from the value hydration produced;
+    # source is the JSON it was hydrated from, where there is one
+    if isinstance(value, Sensitive):
+        return SENSITIVE_MARKER if value.is_redacted else value.reveal()
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _record_into(value, source if isinstance(source, dict) else None, top=False)
+    if isinstance(value, (list, tuple)):
+        elements = source if isinstance(source, list) else []
+        return [_record_value(v, elements[i] if i < len(elements) else None) for i, v in enumerate(value)]
+    if isinstance(value, dict):
+        entries = source if isinstance(source, dict) else {}
+        return {k: _record_value(v, entries.get(k)) for k, v in value.items()}
+    return value
+
+
+def _unchanged(annotation: Any, source: Any, options: FieldOptions, value: Any) -> bool:
+    """Whether ``value`` is still what hydrating ``source`` gives."""
+    try:
+        return _equal(_hydrate_value(annotation, source, options), value)
+    except Exception:  # noqa: BLE001 - a source that no longer hydrates was changed
+        return False
+
+
+def _hydrated_default(f: dataclasses.Field[Any]) -> Any:
+    """What hydration sets a field to when the engine's JSON has no key for it."""
+    if f.default is not dataclasses.MISSING:
+        return f.default
+    if f.default_factory is not dataclasses.MISSING:
+        return f.default_factory()
+    return None
+
+
+def _equal(left: Any, right: Any) -> bool:
+    # a comparison a class defines badly counts as a change, which writes the
+    # instance's value
+    try:
+        return bool(left == right)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _not_encodable(what: str, reason: str) -> NotEncodableError:
+    # worded as the engine words its own NotEncodableError
+    return NotEncodableError(f"{what} cannot be encoded as configuration: {reason}", details={"what": what, "reason": reason})
+
+
+def _dotted_name(type_name: str, subtype: str) -> str:
+    return ".".join(filter(None, (type_name, subtype)))
 
 
 def is_masked(value: Any) -> bool:

@@ -71,11 +71,41 @@ class PlainApp:
     name: str = xcl.field(label=True, default="")
 
 
+@dataclass
+class SecretApp:
+    """A type with a sensitive field, for the encoding tests: ``secret_app "db" { password = ... }``."""
+
+    image: str
+    note: str = ""
+    password: xcl.Sensitive[str] | None = None
+    meta: xcl.Meta | None = None
+
+
+@dataclass
+class EmptyApp:
+    """Each attribute form ``include_empty`` writes when it is unset: ``empty_app "web" { image = ... }``."""
+
+    image: str
+    note: str = ""
+    tags: list[str] = field(default_factory=list)
+    labels: dict[str, str] = field(default_factory=dict)
+    region: str | None = None
+    meta: xcl.Meta | None = None
+
+
 def registry() -> xcl.LocalRegistry:
     """A registry declaring both classes."""
     found = xcl.LocalRegistry()
     found.register_type(SyncApp, "sync_app")
     found.register_type(SyncDatabase, "sync_database", "postgres")
+    return found
+
+
+def encode_registry() -> xcl.LocalRegistry:
+    """The registry of :func:`registry` with the encoding tests' classes declared as well."""
+    found = registry()
+    found.register_type(SecretApp, "secret_app")
+    found.register_type(EmptyApp, "empty_app")
     return found
 
 

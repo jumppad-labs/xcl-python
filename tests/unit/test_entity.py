@@ -32,6 +32,39 @@ def test_meta_from_entity_reads_disabled_and_depends_on_beside_meta():
     assert meta.extra == {}
 
 
+def test_meta_to_record_round_trips_from_entity():
+    record = {
+        "id": "app.web",
+        "name": "web",
+        "type": "app",
+        "subtype": "container",
+        "module": "db",
+        "file": "/f",
+        "line": 2,
+        "column": 1,
+        "status": "created",
+        "links": ["app.base"],
+        "references": {"base": "app.base"},
+        "generation": 7,
+    }
+
+    meta = Meta.from_entity({"meta": record})
+
+    assert meta.to_record() == record
+
+
+def test_meta_to_record_omits_empty_keys():
+    meta = Meta(id="app.web", name="web")
+
+    assert meta.to_record() == {"id": "app.web", "name": "web"}
+
+
+def test_meta_to_record_leaves_out_disabled_and_depends_on():
+    meta = Meta(id="app.web", disabled=True, depends_on=["app.base"])
+
+    assert meta.to_record() == {"id": "app.web"}
+
+
 def test_resource_attribute_raises_removed_name_error_naming_register_type():
     with pytest.raises(RemovedNameError, match="register_type"):
         xcl.Resource

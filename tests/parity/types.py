@@ -14,7 +14,7 @@ needed to keep one fixture's ``app`` from replacing another's.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import xcl
 
@@ -122,6 +122,28 @@ class SingletonsAgent:
     handle: str = xcl.field(label=True, default="")
 
 
+# -- encode -------------------------------------------------------------------
+
+
+@dataclass
+class EncodeStore:
+    address: str
+    password: xcl.Sensitive[str]
+    note: str = ""
+    port: int | None = None
+    tags: list[str] = field(default_factory=list)
+    labels: dict[str, str] | None = None
+    meta: xcl.Meta | None = None
+
+
+@dataclass
+class EncodeService:
+    location: str
+    secret: xcl.Sensitive[str] | None = None
+    token: xcl.Sensitive[str] | None = None
+    name: str = xcl.field(label=True, default="")
+
+
 # FIXTURES maps a fixture directory's name to its types: (type, subtype, class),
 # in the order of the fixture's types.json
 FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
@@ -133,6 +155,22 @@ FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
     "plugin_entities": [],
     "invalid": [("app", None, InvalidApp)],
     "singletons": [("runner", None, SingletonsRunner), ("agent", None, SingletonsAgent)],
+    "encode": [("store", "postgres", EncodeStore), ("service", None, EncodeService)],
+}
+
+
+# HAND_BUILT maps a fixture directory's name to the entities its
+# hand_built.json lists, by address, each built by hand with the values the
+# fixture's main.xcl gives it, never loaded
+HAND_BUILT: dict[str, dict[str, Callable[[], object]]] = {
+    "encode": {
+        "store.postgres.main": lambda: EncodeStore(
+            address="10.0.0.1",
+            password=xcl.Sensitive("s3cret"),
+            tags=[],
+            meta=xcl.Meta(name="main"),
+        ),
+    },
 }
 
 

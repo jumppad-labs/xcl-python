@@ -99,3 +99,9 @@ def test_parity_singletons(run_parity):
     go, python = run_parity("singletons")
 
     assert_same_record("singletons", go, python)
+
+
+def test_parity_encode(run_parity):
+    go, python = run_parity("encode")
+
+    assert_same_record("encode", go, python)

@@ -40,7 +40,7 @@ class Meta:
     def from_entity(cls, data: Mapping[str, Any]) -> Meta:
         """A ``Meta`` from an entity's JSON: its ``meta`` object, unknown keys kept in ``extra``, and its ``disabled`` and ``depends_on``."""
         raw = data.get("meta")
-        known = {f.name for f in dataclasses.fields(cls)} - {"extra", "disabled", "depends_on"}
+        known = set(_record_keys())
         values: dict[str, Any] = {}
         extra: dict[str, Any] = {}
         for key, value in (raw.items() if isinstance(raw, Mapping) else ()):
@@ -53,6 +53,27 @@ class Meta:
         meta.disabled = bool(data.get("disabled") or False)
         meta.depends_on = list(data.get("depends_on") or [])
         return meta
+
+    def to_record(self) -> dict[str, Any]:
+        """The entity JSON's ``meta`` object, the mirror of :meth:`from_entity`.
+
+        Keys left at their empty value are omitted, as the engine reads a
+        missing key as empty, and ``extra`` is merged back in. ``disabled``
+        and ``depends_on`` are not part of it: they sit beside ``meta`` in
+        the entity's JSON.
+        """
+        record: dict[str, Any] = {}
+        for key in _record_keys():
+            value = getattr(self, key)
+            if value:
+                record[key] = value
+        record.update(self.extra)
+        return record
+
+
+def _record_keys() -> list[str]:
+    """The keys of ``Meta`` the entity JSON's ``meta`` object holds, in order: every field but ``extra``, ``disabled`` and ``depends_on``."""
+    return [f.name for f in dataclasses.fields(Meta) if f.name not in ("extra", "disabled", "depends_on")]
 
 
 class Entity(Mapping[str, Any]):

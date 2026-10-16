@@ -25,7 +25,8 @@ from xcl._core import core_pb2
 from xcl._classes import ClassMap
 from xcl._functions import decode_args, encode_result, failed_result
 from xcl._poll import POLL_WAIT_MS, Operation, StateStore, answer_state
-from xcl.config import EVENT_DATA_LEVELS
+from xcl._schema import record_bytes
+from xcl.config import EVENT_DATA_LEVELS, _encode_options
 from xcl.config import Config as _SyncConfig
 from xcl.diff import Diff
 from xcl.events import Event
@@ -254,9 +255,44 @@ class Config:
         response = await self._lookup("Outputs", core_pb2.OutputsRequest())
         return json.loads(response.outputs_json) if response.outputs_json else {}
 
-    async def encode_saved_entity(self, data: bytes, *, highlight: bool = False) -> str:
-        """A saved record rendered as configuration text."""
-        response = await self._lookup("EncodeSavedEntity", core_pb2.EncodeSavedEntityRequest(entity=bytes(data), highlight=highlight))
+    async def encode_entity(
+        self,
+        entity: object,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        highlight: bool = False,
+    ) -> str:
+        """An entity rendered as configuration text; see :meth:`xcl.Config.encode_entity`."""
+        # the record is built first, so a value that is not an entity fails
+        # before anything reaches the engine
+        request = core_pb2.EncodeEntityRequest(
+            entity=record_bytes(entity, self._classes),
+            highlight=highlight,
+            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        )
+        response = await self._lookup("EncodeEntity", request)
+        return response.text.decode()
+
+    async def encode_saved_entity(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        highlight: bool = False,
+    ) -> str:
+        """A saved record rendered as configuration text; see :meth:`xcl.Config.encode_saved_entity`."""
+        request = core_pb2.EncodeSavedEntityRequest(
+            entity=bytes(data),
+            highlight=highlight,
+            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        )
+        response = await self._lookup("EncodeSavedEntity", request)
         return response.text.decode()
 
 
