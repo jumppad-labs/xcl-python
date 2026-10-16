@@ -43,6 +43,14 @@ class Db:
     meta: xcl.Meta | None = None
 
 
+@dataclass
+class Vault:
+    """A config-only type with a sensitive field, for the encoding tests."""
+
+    password: xcl.Sensitive[str] | None = None
+    meta: xcl.Meta | None = None
+
+
 WEB = """
 aio_app "web" {
   name = "web"
@@ -73,6 +81,7 @@ OPERATIONS_AND_LOOKUPS = [
     "find_one",
     "all",
     "outputs",
+    "encode_entity",
     "encode_saved_entity",
     "close",
 ]
@@ -94,6 +103,7 @@ def app_registry(*functions) -> xcl.LocalRegistry:
     found = xcl.LocalRegistry()
     found.register_type(App, "aio_app")
     found.register_type(Db, "aio_db")
+    found.register_type(Vault, "aio_vault")
     for fn in functions:
         found.register_function(fn)
     return found
@@ -476,6 +486,379 @@ def test_cancel_apply_starts_no_operation_after_cancel(tmp_path, recording_plugi
     assert [line["address"] for line in creates] == ["resource.recording.first"]
     for line in creates:
         assert go_time(line["time"]) < cancelled_at + 0.05, f"{line} started after the cancel at {cancelled_at}"
+
+
+# -- encoding entities as configuration -------------------------------------
+
+
+ENCODE_CONFIG = """
+aio_app "web" {
+  name = "web"
+}
+
+aio_db "main" {
+  version = "15"
+}
+
+aio_vault "db" {
+  password = "s3cret"
+}
+"""
+
+ENCODE_ERRORS_CONFIG = """
+variable "region" {
+  default = "eu"
+}
+
+aio_db "main" {
+  version = "15"
+}
+
+output "version" {
+  value = aio_db.main.version
+}
+
+module "leaf" {
+  source = "./leaf"
+}
+"""
+
+WEB_TEXT = """\
+aio_app "web" {
+  name  = "web"
+  image = "nginx"
+}
+"""
+
+DB_TEXT = """\
+aio_db "main" {
+  version = "15"
+}
+"""
+
+VAULT_REVEALED_TEXT = """\
+aio_vault "db" {
+  password = "s3cret"
+}
+"""
+
+
+def write_errors_config(directory: Path) -> Path:
+    """``ENCODE_ERRORS_CONFIG`` with the module it uses beside it."""
+    leaf = directory / "leaf"
+    leaf.mkdir()
+    write_config(leaf, WEB, name="leaf.xcl")
+    return write_config(directory, ENCODE_ERRORS_CONFIG)
+
+
+def test_async_encode_entity_from_find(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> str:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return await c.encode_entity(await c.find(App, "aio_app.web"))
+
+    text = asyncio.run(main())
+
+    assert text == WEB_TEXT
+
+
+def test_async_encode_entity_from_find_by_type(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> list[str]:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return [await c.encode_entity(entity) for entity in await c.find_by_type(None, "aio_app")]
+
+    texts = asyncio.run(main())
+
+    assert texts == [WEB_TEXT]
+
+
+def test_async_encode_entity_from_find_one(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> str:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return await c.encode_entity(await c.find_one(Db, "aio_db"))
+
+    text = asyncio.run(main())
+
+    assert text == DB_TEXT
+
+
+def test_async_encode_entity_from_all(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> list[str]:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return [await c.encode_entity(entity) for entity in await c.all(Db)]
+
+    texts = asyncio.run(main())
+
+    assert texts == [DB_TEXT]
+
+
+def test_async_encode_entity_from_entities(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> dict[str, str]:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return {entity.meta.id: await c.encode_entity(entity) for entity in await c.entities()}
+
+    texts = asyncio.run(main())
+
+    assert sorted(texts) == ["aio_app.web", "aio_db.main", "aio_vault.db"]
+    assert texts["aio_app.web"] == WEB_TEXT
+    assert texts["aio_db.main"] == DB_TEXT
+    assert texts["aio_vault.db"].startswith('aio_vault "db" {\n')
+
+
+def test_async_encode_entity_from_kept_event_entity(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+    kept: list[object] = []
+
+    async def on_event(event: xcl.Event) -> None:
+        if event.resource_id == "aio_db.main" and event.operation == "create" and event.phase == "success":
+            kept.append(event.entity())
+
+    async def main() -> list[str]:
+        async with xcl.aio.Config(registries=[app_registry()], on_event=on_event, event_data="processed") as c:
+            await c.apply(config)
+            return [await c.encode_entity(entity) for entity in kept]
+
+    texts = asyncio.run(main())
+
+    assert len(kept) == 1
+    assert isinstance(kept[0], Db)
+    assert texts == [DB_TEXT]
+
+
+def test_async_encode_entity_hand_built_matches_loaded(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+    built = Db(version="15", meta=xcl.Meta(name="main"))
+
+    async def main() -> tuple[str, str]:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return await c.encode_entity(await c.find(Db, "aio_db.main")), await c.encode_entity(built)
+
+    loaded, from_hand = asyncio.run(main())
+
+    assert from_hand == loaded
+    assert from_hand == DB_TEXT
+
+
+def test_async_encode_entity_sensitive_masked_by_default(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> str:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return await c.encode_entity(await c.find(Vault, "aio_vault.db"))
+
+    text = asyncio.run(main())
+
+    assert text == 'aio_vault "db" {\n  password = "(sensitive)"\n}\n'
+
+
+def test_async_encode_entity_reveal_shows_configured_value(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> str:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return await c.encode_entity(await c.find(Vault, "aio_vault.db"), reveal_sensitive=True)
+
+    text = asyncio.run(main())
+
+    assert text == VAULT_REVEALED_TEXT
+
+
+def test_async_encode_entity_reveal_shows_edited_secret(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> str:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            found = await c.find(Vault, "aio_vault.db")
+            found.password = xcl.Sensitive("edited")
+            return await c.encode_entity(found, reveal_sensitive=True)
+
+    text = asyncio.run(main())
+
+    assert text == 'aio_vault "db" {\n  password = "edited"\n}\n'
+
+
+def test_async_encode_saved_entity_with_reveal_sensitive_matches_encode_entity(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+    store = AsyncMemoryStore()
+
+    async def main() -> tuple[str, str]:
+        async with xcl.aio.Config(registries=[app_registry()], state_store=store) as c:
+            await c.apply(config)
+            live = await c.encode_entity(await c.find(Vault, "aio_vault.db"), reveal_sensitive=True)
+            saved = await c.encode_saved_entity(record_of(store, "aio_vault.db"), reveal_sensitive=True)
+            return live, saved
+
+    live, saved = asyncio.run(main())
+
+    assert saved == live
+    assert saved == VAULT_REVEALED_TEXT
+
+
+def test_async_encode_entity_highlight_strips_to_plain(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> str:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            return await c.encode_entity(await c.find(Db, "aio_db.main"), highlight=True)
+
+    coloured = asyncio.run(main())
+
+    assert "\x1b[" in coloured
+    assert re.sub(r"\x1b\[[0-9;]*m", "", coloured) == DB_TEXT
+
+
+def test_async_encode_entity_highlight_matches_saved_record(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+    store = AsyncMemoryStore()
+
+    async def main() -> tuple[str, str]:
+        async with xcl.aio.Config(registries=[app_registry()], state_store=store) as c:
+            await c.apply(config)
+            live = await c.encode_entity(await c.find(Db, "aio_db.main"), highlight=True)
+            saved = await c.encode_saved_entity(record_of(store, "aio_db.main"), highlight=True)
+            return live, saved
+
+    live, saved = asyncio.run(main())
+
+    assert "\x1b[" in live
+    assert live == saved
+
+
+def test_async_encode_entity_not_an_entity(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            await c.encode_entity("nginx")
+
+    with pytest.raises(xcl.NotEncodableError) as raised:
+        asyncio.run(main())
+
+    assert "not an entity" in str(raised.value)
+
+
+def test_async_encode_entity_variable_not_encodable(tmp_path):
+    config = write_errors_config(tmp_path)
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            await c.encode_entity(await c.find(None, "variable.region"))
+
+    with pytest.raises(xcl.NotEncodableError) as raised:
+        asyncio.run(main())
+
+    assert "variable" in str(raised.value)
+
+
+def test_async_encode_entity_output_not_encodable(tmp_path):
+    config = write_errors_config(tmp_path)
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            await c.encode_entity(await c.find(None, "output.version"))
+
+    with pytest.raises(xcl.NotEncodableError) as raised:
+        asyncio.run(main())
+
+    assert "output" in str(raised.value)
+
+
+def test_async_encode_entity_module_not_encodable(tmp_path):
+    config = write_errors_config(tmp_path)
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            await c.encode_entity(await c.find(None, "module.leaf"))
+
+    with pytest.raises(xcl.NotEncodableError) as raised:
+        asyncio.run(main())
+
+    assert "module" in str(raised.value)
+
+
+def test_async_encode_entity_value_with_no_configuration_form(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            found = await c.find(Db, "aio_db.main")
+            found.version = object()
+            await c.encode_entity(found)
+
+    with pytest.raises(xcl.NotEncodableError) as raised:
+        asyncio.run(main())
+
+    assert "no configuration form" in str(raised.value)
+
+
+def test_async_encode_entity_unregistered_class(tmp_path):
+    @dataclass
+    class Unregistered:
+        name: str = xcl.field(label=True, default="web")
+
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            await c.apply(config)
+            await c.encode_entity(Unregistered())
+
+    with pytest.raises(xcl.NotRegisteredError) as raised:
+        asyncio.run(main())
+
+    assert "Unregistered" in str(raised.value)
+
+
+def test_async_encode_entity_during_operation_refused(tmp_path, slow_plugin):
+    config = slow_config(tmp_path, 800)
+    found = plugin_registry(slow_plugin)
+    found.register_type(Db, "aio_db")
+    built = Db(version="15", meta=xcl.Meta(name="main"))
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    configs: list[xcl.aio.Config] = []
+
+    async def on_event(event: xcl.Event) -> None:
+        if event.operation == "apply" and event.phase == "start":
+            try:
+                texts.append(await configs[0].encode_entity(built))
+            except xcl.Error as err:
+                raised.append(err)
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[found], on_event=on_event, state_path=tmp_path / "state") as c:
+            configs.append(c)
+            await c.apply(config)
+
+    asyncio.run(main())
+
+    assert texts == []
+    assert len(raised) == 1
+    assert isinstance(raised[0], xcl.OperationInProgressError)
 
 
 # -- lookups and operations are awaitables -------------------------------

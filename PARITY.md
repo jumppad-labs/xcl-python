@@ -31,7 +31,8 @@ cancels on `KeyboardInterrupt`.
 | `FindOne[T](c, path...)` / `FindOneEntity(path...)` | `find_one(cls, *path)` | `await find_one(cls, *path)` |
 | `All[T](c)` | `all(cls)` | `await all(cls)` |
 | `Outputs()` | `outputs()` | `await outputs()` |
-| `EncodeSavedEntity(data, options...)` | `encode_saved_entity(data, highlight=False)` | `await encode_saved_entity(data, highlight=False)` |
+| `EncodeEntity(value, options...)` | `encode_entity(entity, include_computed=False, include_empty=False, reveal_sensitive=False, show_references=False, highlight=False)` | `await encode_entity(entity, ...)` |
+| `EncodeSavedEntity(data, options...)` | `encode_saved_entity(data, include_computed=False, include_empty=False, reveal_sensitive=False, show_references=False, highlight=False)` | `await encode_saved_entity(data, ...)` |
 
 Each configuration hydrates into the classes registered on its own
 registries. Passing `None` as the class returns the class registered on the
@@ -39,6 +40,18 @@ configuration for the entity's type, or `xcl.Entity` for a type it registered
 no class for, which is how a Go plugin's entities are read. A class the
 configuration did not register raises `xcl.NotRegisteredError`, as `All[T]`
 with an unregistered `T` returns `ErrNotRegistered` in Go.
+
+The encoding options are keywords, all off by default: `IncludeComputed()` is
+`include_computed=True`, `IncludeEmpty()` is `include_empty=True`,
+`RevealSensitive()` is `reveal_sensitive=True` and `ShowReferences()` is
+`show_references=True`. `highlight=True` is the terminal colouring Go applies
+as `highlight.ANSI.Render(highlight.Pieces(text))`. The engine renders the text
+through the same encoder Go uses, so it is identical to Go's for the same
+entity and choices, which the parity suite checks for every fixture. A
+looked-up entity holds only the sensitive marker, so with `reveal_sensitive`
+the engine shows its own configured value. An entity taken from an event and
+encoded after its operation is filled the same way, so it shows the engine's
+current value, where Go's event data always shows the marker.
 
 ## Configuration options
 
@@ -77,6 +90,5 @@ with an unregistered `T` returns `ErrNotRegistered` in Go.
 |---|---|
 | `Decode(entity, &target)` | A lookup already returns an instance of the registered class; there is no separate struct to fill. |
 | `As[T](entity)` | A lookup takes the class to return; `find(cls, address)` is the conversion. |
-| `EncodeEntity(value, options...)` | It renders a Go value; Python renders a saved record with `encode_saved_entity`. |
 | `GetResources()` / `ResourceCount()` | Deprecated in Go in favour of `Entities()` / `EntityCount()`. |
 | `Event.Entity()` through a Go type | `xcl.Event.entity()` hydrates the class registered on the configuration that emitted the event, or `xcl.Entity`. |

@@ -20,7 +20,20 @@ from pathlib import Path
 import pytest
 
 import xcl
-from sync_entities import Health, JsonLinesStore, Listener, MemoryStore, PlainApp, SyncApp, SyncDatabase, Volume, registry
+from sync_entities import (
+    EmptyApp,
+    Health,
+    JsonLinesStore,
+    Listener,
+    MemoryStore,
+    PlainApp,
+    SecretApp,
+    SyncApp,
+    SyncDatabase,
+    Volume,
+    encode_registry,
+    registry,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -805,6 +818,700 @@ def test_encode_saved_variable_record_is_not_encodable(tmp_path):
         record = store.record("variable.region")
         with pytest.raises(xcl.NotEncodableError):
             c.encode_saved_entity(record)
+
+
+# -- encoding entities as configuration -------------------------------------
+
+
+ENCODE_CONFIG = """
+sync_app "web" {
+  image = "nginx"
+}
+
+sync_database "postgres" "main" {
+  version = "15"
+}
+"""
+
+DATABASE_TEXT = """\
+sync_database "postgres" "main" {
+  version = "15"
+}
+"""
+
+SECRETS_CONFIG = """
+secret_app "db" {
+  image = "postgres"
+  password = "s3cret"
+}
+
+secret_app "base" {
+  image = "redis"
+  note = "hunter2"
+}
+
+secret_app "bare" {
+  image = "nginx"
+  password = secret_app.base.note
+}
+
+secret_app "tmpl" {
+  image = "nginx"
+  password = "pre-${secret_app.base.note}"
+}
+"""
+
+SECRET_DB_MASKED_TEXT = """\
+secret_app "db" {
+  image    = "postgres"
+  password = "(sensitive)"
+}
+"""
+
+SECRET_DB_REVEALED_TEXT = """\
+secret_app "db" {
+  image    = "postgres"
+  password = "s3cret"
+}
+"""
+
+REFERENCES_CONFIG = """
+sync_database "postgres" "main" {
+  version = "15"
+}
+
+sync_database "postgres" "replica" {
+  version = sync_database.postgres.main.version
+}
+"""
+
+REPLICA_TEXT = """\
+sync_database "postgres" "replica" {
+  version = "15"
+}
+"""
+
+REPLICA_REFERENCES_TEXT = """\
+sync_database "postgres" "replica" {
+  version = sync_database.postgres.main.version
+}
+"""
+
+EMPTY_CONFIG = """
+empty_app "web" {
+  image = "nginx"
+}
+"""
+
+# an unset string is "", an empty list [], an unset map {}, and the nullable
+# region, left out, its zero value
+EMPTY_INCLUDED_TEXT = """\
+empty_app "web" {
+  image  = "nginx"
+  note   = ""
+  tags   = []
+  labels = {}
+  region = ""
+}
+"""
+
+ENCODE_ERRORS_CONFIG = """
+variable "region" {
+  default = "eu"
+}
+
+sync_database "postgres" "main" {
+  version = "15"
+}
+
+output "version" {
+  value = sync_database.postgres.main.version
+}
+
+module "leaf" {
+  source = "./leaf"
+}
+"""
+
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def headings(text: str) -> list[str]:
+    """The lines of ``text`` that open a top-level block."""
+    return re.findall(r"^\S.*\{$", text, re.MULTILINE)
+
+
+def strip_colour(text: str) -> str:
+    """``text`` with the terminal colour codes removed."""
+    return ANSI.sub("", text)
+
+
+def recording_text(log: Path, *, computed: bool) -> str:
+    """The text of ``recording_config(..., "first")``'s entity, with or without the field the provider filled in."""
+    if computed:
+        return textwrap.dedent(
+            f"""\
+            resource "recording" "one" {{
+              log    = "{log.as_posix()}"
+              value  = "first"
+              output = "one-first" # set by the provider
+            }}
+            """
+        )
+    return textwrap.dedent(
+        f"""\
+        resource "recording" "one" {{
+          log   = "{log.as_posix()}"
+          value = "first"
+        }}
+        """
+    )
+
+
+def test_encode_entity_from_find(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        found = c.find(SyncDatabase, "sync_database.postgres.main")
+        text = c.encode_entity(found)
+
+    assert text == DATABASE_TEXT
+
+
+def test_encode_entity_from_find_by_type(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        found = c.find_by_type(None, "sync_app")
+        texts = [c.encode_entity(entity) for entity in found]
+
+    assert len(texts) == 1
+    assert headings(texts[0]) == ['sync_app "web" {']
+    assert re.search(r'^  image\s+= "nginx"$', texts[0], re.MULTILINE)
+    assert texts[0].endswith("}\n")
+
+
+def test_encode_entity_from_find_one(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        found = c.find_one(SyncDatabase, "sync_database", "postgres")
+        text = c.encode_entity(found)
+
+    assert text == DATABASE_TEXT
+
+
+def test_encode_entity_from_all(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        found = c.all(SyncApp)
+        texts = [c.encode_entity(entity) for entity in found]
+
+    assert len(texts) == 1
+    assert headings(texts[0]) == ['sync_app "web" {']
+    assert re.search(r'^  image\s+= "nginx"$', texts[0], re.MULTILINE)
+
+
+def test_encode_entity_from_entities(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        texts = {entity.meta.id: c.encode_entity(entity) for entity in c.entities()}
+
+    assert sorted(texts) == ["sync_app.web", "sync_database.postgres.main"]
+    assert headings(texts["sync_app.web"]) == ['sync_app "web" {']
+    assert texts["sync_database.postgres.main"] == DATABASE_TEXT
+
+
+def test_encode_entity_from_kept_event_entity(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+    kept: list[object] = []
+
+    def on_event(event: xcl.Event) -> None:
+        if event.resource_id == "sync_database.postgres.main" and event.operation == "create" and event.phase == "success":
+            kept.append(event.entity())
+
+    with xcl.Config(registries=[registry()], on_event=on_event, event_data="processed") as c:
+        c.apply(config)
+        texts = [c.encode_entity(entity) for entity in kept]
+
+    assert len(kept) == 1
+    assert isinstance(kept[0], SyncDatabase)
+    assert texts == [DATABASE_TEXT]
+
+
+def test_encode_entity_hand_built_matches_loaded(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+    built = SyncDatabase(version="15", meta=xcl.Meta(name="main"))
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        loaded = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.main"))
+        from_hand = c.encode_entity(built)
+
+    assert from_hand == loaded
+    assert from_hand == DATABASE_TEXT
+
+
+def test_encode_entity_hand_built_with_unset_sensitive_field_matches_loaded(tmp_path):
+    config = write_config(
+        tmp_path,
+        """
+        secret_app "web" {
+          image = "nginx"
+        }
+        """,
+    )
+    built = SecretApp(image="nginx", meta=xcl.Meta(name="web"))
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        loaded = c.encode_entity(c.find(SecretApp, "secret_app.web"))
+        from_hand = c.encode_entity(built)
+
+    assert from_hand == 'secret_app "web" {\n  image = "nginx"\n}\n'
+    assert loaded == from_hand
+
+
+def test_encode_entity_untyped_plugin_entity(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        c.apply(config)
+        found = c.find(None, "resource.recording.one")
+        text = c.encode_entity(found)
+
+    assert isinstance(found, xcl.Entity)
+    assert headings(text) == ['resource "recording" "one" {']
+    assert re.search(r'^  value\s+= "first"$', text, re.MULTILINE)
+
+
+def test_encode_entity_computed_off_by_default(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(None, "resource.recording.one"))
+
+    assert text == recording_text(log, computed=False)
+
+
+def test_encode_entity_include_computed(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(None, "resource.recording.one"), include_computed=True)
+
+    assert text == recording_text(log, computed=True)
+
+
+def test_encode_entity_empty_off_by_default(tmp_path):
+    config = write_config(tmp_path, EMPTY_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(EmptyApp, "empty_app.web"))
+
+    assert text == 'empty_app "web" {\n  image = "nginx"\n}\n'
+
+
+def test_encode_entity_include_empty(tmp_path):
+    config = write_config(tmp_path, EMPTY_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(EmptyApp, "empty_app.web"), include_empty=True)
+
+    assert text == EMPTY_INCLUDED_TEXT
+
+
+def test_encode_entity_sensitive_masked_by_default(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(SecretApp, "secret_app.db"))
+
+    assert text == SECRET_DB_MASKED_TEXT
+
+
+def test_encode_entity_reveal_shows_configured_value(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        found = c.find(SecretApp, "secret_app.db")
+        text = c.encode_entity(found, reveal_sensitive=True)
+
+    assert found.password.is_redacted
+    assert text == SECRET_DB_REVEALED_TEXT
+
+
+def test_encode_entity_hand_built_reveal_shows_held_value(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+    built = SecretApp(image="postgres", password=xcl.Sensitive("handmade"), meta=xcl.Meta(name="db"))
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(built, reveal_sensitive=True)
+
+    assert text == 'secret_app "db" {\n  image    = "postgres"\n  password = "handmade"\n}\n'
+
+
+def test_encode_entity_references_off_by_default(tmp_path):
+    config = write_config(tmp_path, REFERENCES_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.replica"))
+
+    assert text == REPLICA_TEXT
+
+
+def test_encode_entity_show_references(tmp_path):
+    config = write_config(tmp_path, REFERENCES_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.replica"), show_references=True)
+
+    assert text == REPLICA_REFERENCES_TEXT
+
+
+def test_encode_entity_hand_built_references_unchanged(tmp_path):
+    config = write_config(tmp_path, REFERENCES_CONFIG)
+    built = SyncDatabase(version="15", meta=xcl.Meta(name="replica"))
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        without = c.encode_entity(built)
+        with_references = c.encode_entity(built, show_references=True)
+
+    assert with_references == without
+    assert with_references == REPLICA_TEXT
+
+
+def test_encode_entity_sensitive_bare_reference_shown(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(SecretApp, "secret_app.bare"), show_references=True)
+
+    assert text == 'secret_app "bare" {\n  image    = "nginx"\n  password = secret_app.base.note\n}\n'
+
+
+def test_encode_entity_sensitive_template_shows_marker_with_references(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(SecretApp, "secret_app.tmpl"), show_references=True)
+
+    assert text == 'secret_app "tmpl" {\n  image    = "nginx"\n  password = "(sensitive)"\n}\n'
+
+
+def test_encode_entity_sensitive_template_shown_with_references_and_reveal(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(SecretApp, "secret_app.tmpl"), show_references=True, reveal_sensitive=True)
+
+    assert text == 'secret_app "tmpl" {\n  image    = "nginx"\n  password = "pre-${secret_app.base.note}"\n}\n'
+
+
+def test_encode_entity_highlight_off_by_default(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        text = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.main"))
+
+    assert "\x1b[" not in text
+
+
+def test_encode_entity_highlight_strips_to_plain(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        coloured = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.main"), highlight=True)
+
+    assert "\x1b[" in coloured
+    assert strip_colour(coloured) == DATABASE_TEXT
+
+
+def test_encode_entity_highlight_matches_saved_record(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+    store = MemoryStore()
+
+    with xcl.Config(registries=[registry()], state_store=store) as c:
+        c.apply(config)
+        live = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.main"), highlight=True)
+        saved = c.encode_saved_entity(store.record("sync_database.postgres.main"), highlight=True)
+
+    assert "\x1b[" in live
+    assert live == saved
+
+
+def test_encode_entity_shows_edited_value(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        found = c.find(SyncDatabase, "sync_database.postgres.main")
+        found.version = "17"
+        text = c.encode_entity(found)
+
+    assert text == 'sync_database "postgres" "main" {\n  version = "17"\n}\n'
+
+
+def test_encode_entity_reveal_shows_edited_secret(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        found = c.find(SecretApp, "secret_app.db")
+        found.password = xcl.Sensitive("edited")
+        text = c.encode_entity(found, reveal_sensitive=True)
+
+    assert "s3cret" not in text
+    assert text == 'secret_app "db" {\n  image    = "postgres"\n  password = "edited"\n}\n'
+
+
+def test_encode_saved_entity_with_include_computed_matches_encode_entity(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    store = MemoryStore()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_store=store) as c:
+        c.apply(config)
+        live = c.encode_entity(c.find(None, "resource.recording.one"), include_computed=True)
+        saved = c.encode_saved_entity(store.record("resource.recording.one"), include_computed=True)
+
+    assert saved == live
+    assert saved == recording_text(log, computed=True)
+
+
+def test_encode_saved_entity_with_include_empty_matches_encode_entity(tmp_path):
+    config = write_config(tmp_path, EMPTY_CONFIG)
+    store = MemoryStore()
+
+    with xcl.Config(registries=[encode_registry()], state_store=store) as c:
+        c.apply(config)
+        live = c.encode_entity(c.find(EmptyApp, "empty_app.web"), include_empty=True)
+        saved = c.encode_saved_entity(store.record("empty_app.web"), include_empty=True)
+
+    assert saved == live
+    assert saved == EMPTY_INCLUDED_TEXT
+
+
+def test_encode_saved_entity_with_reveal_sensitive_matches_encode_entity(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+    store = MemoryStore()
+
+    with xcl.Config(registries=[encode_registry()], state_store=store) as c:
+        c.apply(config)
+        live = c.encode_entity(c.find(SecretApp, "secret_app.db"), reveal_sensitive=True)
+        saved = c.encode_saved_entity(store.record("secret_app.db"), reveal_sensitive=True)
+
+    assert saved == live
+    assert saved == SECRET_DB_REVEALED_TEXT
+
+
+def test_encode_saved_entity_with_show_references_matches_encode_entity(tmp_path):
+    config = write_config(tmp_path, REFERENCES_CONFIG)
+    store = MemoryStore()
+
+    with xcl.Config(registries=[registry()], state_store=store) as c:
+        c.apply(config)
+        live = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.replica"), show_references=True)
+        saved = c.encode_saved_entity(store.record("sync_database.postgres.replica"), show_references=True)
+
+    assert saved == live
+    assert saved == REPLICA_REFERENCES_TEXT
+
+
+def test_encode_saved_entity_without_choices_unchanged(tmp_path):
+    config = write_config(tmp_path, SECRETS_CONFIG)
+    store = MemoryStore()
+
+    with xcl.Config(registries=[encode_registry()], state_store=store) as c:
+        c.apply(config)
+        saved = c.encode_saved_entity(store.record("secret_app.db"))
+
+    assert saved == SECRET_DB_MASKED_TEXT
+
+
+NESTED_DEFAULT_CONFIG = """
+sync_app "web" {
+  image = "nginx"
+
+  health {
+    path = "/h"
+  }
+}
+"""
+
+
+def test_encode_entity_leaves_out_nested_dataclass_default(tmp_path):
+    config = write_config(tmp_path, NESTED_DEFAULT_CONFIG)
+
+    with xcl.Config(registries=[encode_registry()]) as c:
+        c.apply(config)
+        app = c.find(SyncApp, "sync_app.web")
+        text = c.encode_entity(app)
+
+    # hydration filled interval with the dataclass default, which the
+    # configuration never set; replicas is the schema's default, which the
+    # engine holds too
+    assert app.health == Health(path="/h", interval=10)
+    assert text == 'sync_app "web" {\n  image    = "nginx"\n  replicas = 2\n\n  health {\n    path = "/h"\n  }\n}\n'
+
+
+def test_encode_entity_nested_default_matches_saved_record(tmp_path):
+    config = write_config(tmp_path, NESTED_DEFAULT_CONFIG)
+    store = MemoryStore()
+
+    with xcl.Config(registries=[encode_registry()], state_store=store) as c:
+        c.apply(config)
+        live = c.encode_entity(c.find(SyncApp, "sync_app.web"))
+        saved = c.encode_saved_entity(store.record("sync_app.web"))
+
+    assert live == saved
+
+
+def write_errors_config(directory: Path) -> Path:
+    """``ENCODE_ERRORS_CONFIG`` with the module it uses beside it."""
+    leaf = directory / "leaf"
+    leaf.mkdir()
+    write_config(leaf, WEB, name="leaf.xcl")
+    return write_config(directory, ENCODE_ERRORS_CONFIG)
+
+
+def test_encode_entity_not_an_entity(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        with pytest.raises(xcl.NotEncodableError) as raised:
+            c.encode_entity("nginx")
+
+    assert "not an entity" in str(raised.value)
+
+
+def test_encode_entity_variable_not_encodable(tmp_path):
+    config = write_errors_config(tmp_path)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        variable = c.find(None, "variable.region")
+        with pytest.raises(xcl.NotEncodableError) as raised:
+            c.encode_entity(variable)
+
+    assert "variable" in str(raised.value)
+
+
+def test_encode_entity_output_not_encodable(tmp_path):
+    config = write_errors_config(tmp_path)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        output = c.find(None, "output.version")
+        with pytest.raises(xcl.NotEncodableError) as raised:
+            c.encode_entity(output)
+
+    assert "output" in str(raised.value)
+
+
+def test_encode_entity_module_not_encodable(tmp_path):
+    config = write_errors_config(tmp_path)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        module = c.find(None, "module.leaf")
+        with pytest.raises(xcl.NotEncodableError) as raised:
+            c.encode_entity(module)
+
+    assert "module" in str(raised.value)
+
+
+def test_encode_entity_value_with_no_configuration_form(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        found = c.find(SyncDatabase, "sync_database.postgres.main")
+        found.version = object()
+        with pytest.raises(xcl.NotEncodableError) as raised:
+            c.encode_entity(found)
+
+    assert "no configuration form" in str(raised.value)
+
+
+def test_encode_entity_unregistered_class(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        with pytest.raises(xcl.NotRegisteredError) as raised:
+            c.encode_entity(PlainApp(image="nginx", name="web"))
+
+    assert "PlainApp" in str(raised.value)
+
+
+def test_encode_entity_unnamed_instance_not_encodable(tmp_path):
+    config = write_config(tmp_path, ENCODE_CONFIG)
+
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        with pytest.raises(xcl.NotEncodableError) as raised:
+            c.encode_entity(SyncDatabase(version="15"))
+
+    assert "no name" in str(raised.value)
+
+
+def test_encode_entity_during_operation_refused(tmp_path, slow_plugin):
+    config = write_config(
+        tmp_path,
+        """
+        resource "slow" "one" {
+          delay_ms = 800
+        }
+        """,
+    )
+    found = plugin_registry(slow_plugin)
+    found.register_type(SyncDatabase, "sync_database", "postgres")
+    built = SyncDatabase(version="15", meta=xcl.Meta(name="main"))
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    configs: list[xcl.Config] = []
+
+    def on_event(event: xcl.Event) -> None:
+        if event.operation == "apply" and event.phase == "start":
+            try:
+                texts.append(configs[0].encode_entity(built))
+            except xcl.Error as err:
+                raised.append(err)
+
+    with xcl.Config(registries=[found], on_event=on_event, state_path=tmp_path / "state") as c:
+        configs.append(c)
+        c.apply(config)
+
+    assert texts == []
+    assert len(raised) == 1
+    assert isinstance(raised[0], xcl.OperationInProgressError)
 
 
 # -- threads and interruption ----------------------------------------------

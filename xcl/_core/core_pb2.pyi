@@ -361,15 +361,45 @@ class OutputsResponse(_message.Message):
     outputs_json: bytes
     def __init__(self, outputs_json: _Optional[bytes] = ...) -> None: ...
 
+class EncodeOptions(_message.Message):
+    __slots__ = ("include_computed", "include_empty", "reveal_sensitive", "show_references")
+    INCLUDE_COMPUTED_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_EMPTY_FIELD_NUMBER: _ClassVar[int]
+    REVEAL_SENSITIVE_FIELD_NUMBER: _ClassVar[int]
+    SHOW_REFERENCES_FIELD_NUMBER: _ClassVar[int]
+    include_computed: bool
+    include_empty: bool
+    reveal_sensitive: bool
+    show_references: bool
+    def __init__(self, include_computed: _Optional[bool] = ..., include_empty: _Optional[bool] = ..., reveal_sensitive: _Optional[bool] = ..., show_references: _Optional[bool] = ...) -> None: ...
+
 class EncodeSavedEntityRequest(_message.Message):
-    __slots__ = ("entity", "highlight")
+    __slots__ = ("entity", "highlight", "options")
     ENTITY_FIELD_NUMBER: _ClassVar[int]
     HIGHLIGHT_FIELD_NUMBER: _ClassVar[int]
+    OPTIONS_FIELD_NUMBER: _ClassVar[int]
     entity: bytes
     highlight: bool
-    def __init__(self, entity: _Optional[bytes] = ..., highlight: _Optional[bool] = ...) -> None: ...
+    options: EncodeOptions
+    def __init__(self, entity: _Optional[bytes] = ..., highlight: _Optional[bool] = ..., options: _Optional[_Union[EncodeOptions, _Mapping]] = ...) -> None: ...
 
 class EncodeSavedEntityResponse(_message.Message):
+    __slots__ = ("text",)
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    text: bytes
+    def __init__(self, text: _Optional[bytes] = ...) -> None: ...
+
+class EncodeEntityRequest(_message.Message):
+    __slots__ = ("entity", "highlight", "options")
+    ENTITY_FIELD_NUMBER: _ClassVar[int]
+    HIGHLIGHT_FIELD_NUMBER: _ClassVar[int]
+    OPTIONS_FIELD_NUMBER: _ClassVar[int]
+    entity: bytes
+    highlight: bool
+    options: EncodeOptions
+    def __init__(self, entity: _Optional[bytes] = ..., highlight: _Optional[bool] = ..., options: _Optional[_Union[EncodeOptions, _Mapping]] = ...) -> None: ...
+
+class EncodeEntityResponse(_message.Message):
     __slots__ = ("text",)
     TEXT_FIELD_NUMBER: _ClassVar[int]
     text: bytes
