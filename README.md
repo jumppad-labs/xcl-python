@@ -189,7 +189,9 @@ Configuration is checked against the class as it is against a Go type: a
 missing required field, a computed field set in configuration or an unknown
 attribute is reported with its file and line. A looked-up `Sensitive` value
 prints as `(sensitive)` and `reveal()` returns `None`; real values never leave
-the engine through a lookup.
+the engine through a lookup. To show a looked-up entity with its real values,
+encode it with `cfg.encode_entity(entity, reveal_sensitive=True)`, see
+[Encoding entities as configuration](#encoding-entities-as-configuration).
 
 ### Functions
 
@@ -238,11 +240,70 @@ registered on the configuration that emitted it, or an `xcl.Entity`.
 
 Lookups: `entities()`, `entity_count()`, `find(cls, address)`,
 `find_by_type(cls, *path)`, `find_one(cls, *path)`, `all(cls)`,
-`outputs()` and `encode_saved_entity(record)`. Each configuration has its
-own classes, those registered on its registries. Pass `None` as the class to
-get the class registered on this configuration for the entity's type, or an
-`xcl.Entity` for a type it did not register; a class this configuration did
-not register raises `xcl.NotRegisteredError`.
+`outputs()`, `encode_entity(entity)` and `encode_saved_entity(record)`. Each
+configuration has its own classes, those registered on its registries. Pass
+`None` as the class to get the class registered on this configuration for the
+entity's type, or an `xcl.Entity` for a type it did not register; a class this
+configuration did not register raises `xcl.NotRegisteredError`.
+
+### Encoding entities as configuration
+
+`cfg.encode_entity(entity)` turns an entity into xcl configuration text, the
+same text Go's `xcl.EncodeEntity` writes for it:
+
+```python
+app = cfg.find(App, "app.web")
+print(cfg.encode_entity(app))
+print(cfg.encode_entity(app, reveal_sensitive=True, highlight=True))
+```
+
+For an `app "web"` block that sets `image = "nginx:1.27-alpine"` and
+`password = "s3cret"`, the first call prints:
+
+```hcl
+app "web" {
+  image    = "nginx:1.27-alpine"
+  replicas = 2
+  password = "(sensitive)"
+}
+```
+
+The entity can be one returned by any lookup or carried by an event, an
+instance of a registered class built by hand, or the `xcl.Entity` a lookup
+returns for a plugin's type. Changes made to a looked-up entity show in the
+text. The engine renders the text, so Python and Go give identical text for
+the same entity. Four keyword choices, all off by default, match Go's encode
+options:
+
+- `include_computed=True` also writes the fields a provider filled in.
+- `include_empty=True` also writes attributes that are unset or at their
+  zero value: `""`, `[]`, `{}`, or the zero value of a nullable attribute.
+- `reveal_sensitive=True` writes each sensitive value for real rather than as
+  `(sensitive)`. A looked-up entity holds only the marker, so the engine shows
+  its own configured value; a value the entity holds for real, such as an
+  edit or one set by hand, is shown as it is. An entity taken from an event
+  and encoded after its operation shows the engine's current value, where
+  Go's event data always shows the marker.
+- `show_references=True` writes each field that referred to another entity as
+  the configuration wrote it, rather than its value. A hand-built entity has
+  no references, so its values are written as they are.
+
+`highlight=True` colours the text for a terminal, and combines with each
+choice. `cfg.encode_saved_entity(record)` renders a saved record, as a state
+store holds it and events carry it, and takes the same keywords.
+
+A looked-up entity is encoded from the data the engine returned for it, so
+only the fields you change differ from Go's text: a default the dataclass
+filled in, such as `Health.interval`, is not written unless you set it. A
+copy of a looked-up entity, such as one made with `dataclasses.replace`, is
+encoded from its values like a hand-built one, defaults included.
+
+Encoding a value that is not an entity, a variable, output or module, or a
+value with no configuration form raises `xcl.NotEncodableError`; an instance
+of a class this configuration did not register raises
+`xcl.NotRegisteredError`; and encoding while an operation runs raises
+`xcl.OperationInProgressError`. With `xcl.aio.Config` the call is
+`await cfg.encode_entity(entity)`.
 
 ## Asyncio
 
