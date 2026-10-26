@@ -7,17 +7,102 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class TokenKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    TOKEN_KIND_TEXT: _ClassVar[TokenKind]
+    TOKEN_KIND_BLOCK: _ClassVar[TokenKind]
+    TOKEN_KIND_BLOCK_TYPE: _ClassVar[TokenKind]
+    TOKEN_KIND_NESTED_BLOCK: _ClassVar[TokenKind]
+    TOKEN_KIND_LABEL: _ClassVar[TokenKind]
+    TOKEN_KIND_TYPE_LABEL: _ClassVar[TokenKind]
+    TOKEN_KIND_NAME_LABEL: _ClassVar[TokenKind]
+    TOKEN_KIND_ATTRIBUTE: _ClassVar[TokenKind]
+    TOKEN_KIND_STRING: _ClassVar[TokenKind]
+    TOKEN_KIND_STRING_ESCAPE: _ClassVar[TokenKind]
+    TOKEN_KIND_HEREDOC: _ClassVar[TokenKind]
+    TOKEN_KIND_HEREDOC_MARKER: _ClassVar[TokenKind]
+    TOKEN_KIND_HEREDOC_OPERATOR: _ClassVar[TokenKind]
+    TOKEN_KIND_NUMBER: _ClassVar[TokenKind]
+    TOKEN_KIND_CONSTANT: _ClassVar[TokenKind]
+    TOKEN_KIND_FUNCTION: _ClassVar[TokenKind]
+    TOKEN_KIND_BUILTIN_FUNCTION: _ClassVar[TokenKind]
+    TOKEN_KIND_REFERENCE: _ClassVar[TokenKind]
+    TOKEN_KIND_MEMBER: _ClassVar[TokenKind]
+    TOKEN_KIND_OPERATOR: _ClassVar[TokenKind]
+    TOKEN_KIND_PUNCTUATION: _ClassVar[TokenKind]
+    TOKEN_KIND_INTERPOLATION_BEGIN: _ClassVar[TokenKind]
+    TOKEN_KIND_INTERPOLATION_END: _ClassVar[TokenKind]
+    TOKEN_KIND_TEMPLATE_DIRECTIVE: _ClassVar[TokenKind]
+    TOKEN_KIND_ACCESSOR: _ClassVar[TokenKind]
+    TOKEN_KIND_COMMENT: _ClassVar[TokenKind]
+    TOKEN_KIND_LINE_COMMENT: _ClassVar[TokenKind]
+    TOKEN_KIND_HASH_COMMENT: _ClassVar[TokenKind]
+    TOKEN_KIND_BLOCK_COMMENT: _ClassVar[TokenKind]
+    TOKEN_KIND_DIFF: _ClassVar[TokenKind]
+    TOKEN_KIND_INSERTED: _ClassVar[TokenKind]
+    TOKEN_KIND_DELETED: _ClassVar[TokenKind]
+    TOKEN_KIND_CHANGED: _ClassVar[TokenKind]
+    TOKEN_KIND_PROBLEM: _ClassVar[TokenKind]
+    TOKEN_KIND_ERROR: _ClassVar[TokenKind]
+    TOKEN_KIND_WARNING: _ClassVar[TokenKind]
+    TOKEN_KIND_REPORT: _ClassVar[TokenKind]
+    TOKEN_KIND_SUMMARY: _ClassVar[TokenKind]
+    TOKEN_KIND_LOCATION: _ClassVar[TokenKind]
+    TOKEN_KIND_GUTTER: _ClassVar[TokenKind]
+    TOKEN_KIND_DETAIL: _ClassVar[TokenKind]
+
 class EventDataLevel(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     EVENT_DATA_NONE: _ClassVar[EventDataLevel]
     EVENT_DATA_RAW: _ClassVar[EventDataLevel]
     EVENT_DATA_PROCESSED: _ClassVar[EventDataLevel]
+TOKEN_KIND_TEXT: TokenKind
+TOKEN_KIND_BLOCK: TokenKind
+TOKEN_KIND_BLOCK_TYPE: TokenKind
+TOKEN_KIND_NESTED_BLOCK: TokenKind
+TOKEN_KIND_LABEL: TokenKind
+TOKEN_KIND_TYPE_LABEL: TokenKind
+TOKEN_KIND_NAME_LABEL: TokenKind
+TOKEN_KIND_ATTRIBUTE: TokenKind
+TOKEN_KIND_STRING: TokenKind
+TOKEN_KIND_STRING_ESCAPE: TokenKind
+TOKEN_KIND_HEREDOC: TokenKind
+TOKEN_KIND_HEREDOC_MARKER: TokenKind
+TOKEN_KIND_HEREDOC_OPERATOR: TokenKind
+TOKEN_KIND_NUMBER: TokenKind
+TOKEN_KIND_CONSTANT: TokenKind
+TOKEN_KIND_FUNCTION: TokenKind
+TOKEN_KIND_BUILTIN_FUNCTION: TokenKind
+TOKEN_KIND_REFERENCE: TokenKind
+TOKEN_KIND_MEMBER: TokenKind
+TOKEN_KIND_OPERATOR: TokenKind
+TOKEN_KIND_PUNCTUATION: TokenKind
+TOKEN_KIND_INTERPOLATION_BEGIN: TokenKind
+TOKEN_KIND_INTERPOLATION_END: TokenKind
+TOKEN_KIND_TEMPLATE_DIRECTIVE: TokenKind
+TOKEN_KIND_ACCESSOR: TokenKind
+TOKEN_KIND_COMMENT: TokenKind
+TOKEN_KIND_LINE_COMMENT: TokenKind
+TOKEN_KIND_HASH_COMMENT: TokenKind
+TOKEN_KIND_BLOCK_COMMENT: TokenKind
+TOKEN_KIND_DIFF: TokenKind
+TOKEN_KIND_INSERTED: TokenKind
+TOKEN_KIND_DELETED: TokenKind
+TOKEN_KIND_CHANGED: TokenKind
+TOKEN_KIND_PROBLEM: TokenKind
+TOKEN_KIND_ERROR: TokenKind
+TOKEN_KIND_WARNING: TokenKind
+TOKEN_KIND_REPORT: TokenKind
+TOKEN_KIND_SUMMARY: TokenKind
+TOKEN_KIND_LOCATION: TokenKind
+TOKEN_KIND_GUTTER: TokenKind
+TOKEN_KIND_DETAIL: TokenKind
 EVENT_DATA_NONE: EventDataLevel
 EVENT_DATA_RAW: EventDataLevel
 EVENT_DATA_PROCESSED: EventDataLevel
 
 class Error(_message.Message):
-    __slots__ = ("code", "message", "details", "causes")
+    __slots__ = ("code", "message", "details", "causes", "report")
     class DetailsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -29,11 +114,21 @@ class Error(_message.Message):
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
     DETAILS_FIELD_NUMBER: _ClassVar[int]
     CAUSES_FIELD_NUMBER: _ClassVar[int]
+    REPORT_FIELD_NUMBER: _ClassVar[int]
     code: str
     message: str
     details: _containers.ScalarMap[str, str]
     causes: _containers.RepeatedCompositeFieldContainer[Error]
-    def __init__(self, code: _Optional[str] = ..., message: _Optional[str] = ..., details: _Optional[_Mapping[str, str]] = ..., causes: _Optional[_Iterable[_Union[Error, _Mapping]]] = ...) -> None: ...
+    report: _containers.RepeatedCompositeFieldContainer[Token]
+    def __init__(self, code: _Optional[str] = ..., message: _Optional[str] = ..., details: _Optional[_Mapping[str, str]] = ..., causes: _Optional[_Iterable[_Union[Error, _Mapping]]] = ..., report: _Optional[_Iterable[_Union[Token, _Mapping]]] = ...) -> None: ...
+
+class Token(_message.Message):
+    __slots__ = ("kind", "text")
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    kind: TokenKind
+    text: str
+    def __init__(self, kind: _Optional[_Union[TokenKind, str]] = ..., text: _Optional[str] = ...) -> None: ...
 
 class GetVersionRequest(_message.Message):
     __slots__ = ()
@@ -46,6 +141,25 @@ class GetVersionResponse(_message.Message):
     version: str
     abi_version: int
     def __init__(self, version: _Optional[str] = ..., abi_version: _Optional[int] = ...) -> None: ...
+
+class ConvertThemeRequest(_message.Message):
+    __slots__ = ("vscode_theme_json",)
+    VSCODE_THEME_JSON_FIELD_NUMBER: _ClassVar[int]
+    vscode_theme_json: bytes
+    def __init__(self, vscode_theme_json: _Optional[bytes] = ...) -> None: ...
+
+class ConvertThemeResponse(_message.Message):
+    __slots__ = ("styles",)
+    class StylesEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: int
+        value: str
+        def __init__(self, key: _Optional[int] = ..., value: _Optional[str] = ...) -> None: ...
+    STYLES_FIELD_NUMBER: _ClassVar[int]
+    styles: _containers.ScalarMap[int, str]
+    def __init__(self, styles: _Optional[_Mapping[int, str]] = ...) -> None: ...
 
 class CreateConfigRequest(_message.Message):
     __slots__ = ("registries", "state_store", "state_mask", "events", "event_buffer_size", "event_data", "event_mask", "no_event_mask", "variables_json")
@@ -282,14 +396,16 @@ class Event(_message.Message):
     def __init__(self, time_unix_nano: _Optional[int] = ..., source: _Optional[str] = ..., operation: _Optional[str] = ..., phase: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., file: _Optional[str] = ..., duration_nano: _Optional[int] = ..., error: _Optional[_Union[Error, _Mapping]] = ..., data: _Optional[bytes] = ..., meta_json: _Optional[bytes] = ...) -> None: ...
 
 class OperationFinished(_message.Message):
-    __slots__ = ("operation_id", "error", "diff_json")
+    __slots__ = ("operation_id", "error", "diff_json", "diff_tokens")
     OPERATION_ID_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     DIFF_JSON_FIELD_NUMBER: _ClassVar[int]
+    DIFF_TOKENS_FIELD_NUMBER: _ClassVar[int]
     operation_id: int
     error: Error
     diff_json: bytes
-    def __init__(self, operation_id: _Optional[int] = ..., error: _Optional[_Union[Error, _Mapping]] = ..., diff_json: _Optional[bytes] = ...) -> None: ...
+    diff_tokens: _containers.RepeatedCompositeFieldContainer[Token]
+    def __init__(self, operation_id: _Optional[int] = ..., error: _Optional[_Union[Error, _Mapping]] = ..., diff_json: _Optional[bytes] = ..., diff_tokens: _Optional[_Iterable[_Union[Token, _Mapping]]] = ...) -> None: ...
 
 class CompleteRequest(_message.Message):
     __slots__ = ("task_id", "state", "function")
@@ -374,33 +490,37 @@ class EncodeOptions(_message.Message):
     def __init__(self, include_computed: _Optional[bool] = ..., include_empty: _Optional[bool] = ..., reveal_sensitive: _Optional[bool] = ..., show_references: _Optional[bool] = ...) -> None: ...
 
 class EncodeSavedEntityRequest(_message.Message):
-    __slots__ = ("entity", "highlight", "options")
+    __slots__ = ("entity", "options", "tokens")
     ENTITY_FIELD_NUMBER: _ClassVar[int]
-    HIGHLIGHT_FIELD_NUMBER: _ClassVar[int]
     OPTIONS_FIELD_NUMBER: _ClassVar[int]
+    TOKENS_FIELD_NUMBER: _ClassVar[int]
     entity: bytes
-    highlight: bool
     options: EncodeOptions
-    def __init__(self, entity: _Optional[bytes] = ..., highlight: _Optional[bool] = ..., options: _Optional[_Union[EncodeOptions, _Mapping]] = ...) -> None: ...
+    tokens: bool
+    def __init__(self, entity: _Optional[bytes] = ..., options: _Optional[_Union[EncodeOptions, _Mapping]] = ..., tokens: _Optional[bool] = ...) -> None: ...
 
 class EncodeSavedEntityResponse(_message.Message):
-    __slots__ = ("text",)
+    __slots__ = ("text", "tokens")
     TEXT_FIELD_NUMBER: _ClassVar[int]
+    TOKENS_FIELD_NUMBER: _ClassVar[int]
     text: bytes
-    def __init__(self, text: _Optional[bytes] = ...) -> None: ...
+    tokens: _containers.RepeatedCompositeFieldContainer[Token]
+    def __init__(self, text: _Optional[bytes] = ..., tokens: _Optional[_Iterable[_Union[Token, _Mapping]]] = ...) -> None: ...
 
 class EncodeEntityRequest(_message.Message):
-    __slots__ = ("entity", "highlight", "options")
+    __slots__ = ("entity", "options", "tokens")
     ENTITY_FIELD_NUMBER: _ClassVar[int]
-    HIGHLIGHT_FIELD_NUMBER: _ClassVar[int]
     OPTIONS_FIELD_NUMBER: _ClassVar[int]
+    TOKENS_FIELD_NUMBER: _ClassVar[int]
     entity: bytes
-    highlight: bool
     options: EncodeOptions
-    def __init__(self, entity: _Optional[bytes] = ..., highlight: _Optional[bool] = ..., options: _Optional[_Union[EncodeOptions, _Mapping]] = ...) -> None: ...
+    tokens: bool
+    def __init__(self, entity: _Optional[bytes] = ..., options: _Optional[_Union[EncodeOptions, _Mapping]] = ..., tokens: _Optional[bool] = ...) -> None: ...
 
 class EncodeEntityResponse(_message.Message):
-    __slots__ = ("text",)
+    __slots__ = ("text", "tokens")
     TEXT_FIELD_NUMBER: _ClassVar[int]
+    TOKENS_FIELD_NUMBER: _ClassVar[int]
     text: bytes
-    def __init__(self, text: _Optional[bytes] = ...) -> None: ...
+    tokens: _containers.RepeatedCompositeFieldContainer[Token]
+    def __init__(self, text: _Optional[bytes] = ..., tokens: _Optional[_Iterable[_Union[Token, _Mapping]]] = ...) -> None: ...

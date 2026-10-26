@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import io
 import json
+import logging
 import re
 import textwrap
 import time
@@ -712,37 +714,6 @@ def test_async_encode_saved_entity_with_reveal_sensitive_matches_encode_entity(t
     assert saved == VAULT_REVEALED_TEXT
 
 
-def test_async_encode_entity_highlight_strips_to_plain(tmp_path):
-    config = write_config(tmp_path, ENCODE_CONFIG)
-
-    async def main() -> str:
-        async with xcl.aio.Config(registries=[app_registry()]) as c:
-            await c.apply(config)
-            return await c.encode_entity(await c.find(Db, "aio_db.main"), highlight=True)
-
-    coloured = asyncio.run(main())
-
-    assert "\x1b[" in coloured
-    assert re.sub(r"\x1b\[[0-9;]*m", "", coloured) == DB_TEXT
-
-
-def test_async_encode_entity_highlight_matches_saved_record(tmp_path):
-    config = write_config(tmp_path, ENCODE_CONFIG)
-    store = AsyncMemoryStore()
-
-    async def main() -> tuple[str, str]:
-        async with xcl.aio.Config(registries=[app_registry()], state_store=store) as c:
-            await c.apply(config)
-            live = await c.encode_entity(await c.find(Db, "aio_db.main"), highlight=True)
-            saved = await c.encode_saved_entity(record_of(store, "aio_db.main"), highlight=True)
-            return live, saved
-
-    live, saved = asyncio.run(main())
-
-    assert "\x1b[" in live
-    assert live == saved
-
-
 def test_async_encode_entity_not_an_entity(tmp_path):
     config = write_config(tmp_path, ENCODE_CONFIG)
 
@@ -993,6 +964,53 @@ def test_async_encode_edited_entity_from_handler_during_apply_refused(tmp_path, 
     assert isinstance(raised[0], xcl.OperationInProgressError)
 
 
+# -- printing an error's report ---------------------------------------------
+
+
+# the nested timeout block aio_app does not declare opens on line 7
+UNSUPPORTED_BLOCK = """
+aio_app "web" {
+  name = "web"
+}
+
+aio_app "api" {
+  name = "api"
+  timeout {
+    seconds = 5
+  }
+}
+"""
+
+
+def test_async_unsupported_block_report_printed(tmp_path):
+    config = write_config(tmp_path, UNSUPPORTED_BLOCK)
+    out = io.StringIO()
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[app_registry()]) as c:
+            try:
+                await c.apply(config)
+            except xcl.ConfigError as err:
+                xcl.print_error(err, file=out)
+
+    asyncio.run(main())
+
+    assert out.getvalue().split("\n") == [
+        "Error: Unsupported block type",
+        "",
+        f"  on {config} line 7, in aio_app.api, field timeout[0]:",
+        '     5 | aio_app "api" {',
+        '     6 |   name = "api"',
+        "     7 |   timeout {",
+        "     8 |     seconds = 5",
+        "     9 |   }",
+        "",
+        'Blocks of type "timeout" are not expected here.',
+        "",
+        "",
+    ]
+
+
 # -- lookups and operations are awaitables -------------------------------
 
 
@@ -1106,3 +1124,140 @@ def test_sync_and_async_expose_same_surface():
     for name in OPERATIONS_AND_LOOKUPS:
         assert inspect.iscoroutinefunction(getattr(xcl.aio.Config, name)), f"aio.Config.{name} is not a coroutine function"
         assert not inspect.iscoroutinefunction(getattr(xcl.Config, name)), f"Config.{name} is a coroutine function"
+
+
+# -- printing resources and change summaries --------------------------------
+
+
+def write_recording_config(directory: Path, log: Path) -> Path:
+    return write_config(
+        directory,
+        f"""
+        resource "recording" "one" {{
+          log = "{log.as_posix()}"
+          value = "first"
+        }}
+        """,
+    )
+
+
+def recording_text_computed(log: Path) -> str:
+    """The text of the recording entity with the field the provider filled in."""
+    return textwrap.dedent(
+        f"""\
+        resource "recording" "one" {{
+          log    = "{log.as_posix()}"
+          value  = "first"
+          output = "one-first" # set by the provider
+        }}
+        """
+    )
+
+
+def test_async_print_entity_with_computed(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = write_recording_config(tmp_path, log)
+    out = io.StringIO()
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+            await c.apply(config)
+            await c.print_entity(await c.find(None, "resource.recording.one"), out, include_computed=True)
+
+    asyncio.run(main())
+
+    assert out.getvalue() == recording_text_computed(log)
+
+
+def test_async_print_saved_entity_with_computed(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = write_recording_config(tmp_path, log)
+    store = AsyncMemoryStore()
+    out = io.StringIO()
+
+    async def main() -> None:
+        async with xcl.aio.Config(registries=[plugin_registry(recording_plugin)], state_store=store) as c:
+            await c.apply(config)
+            await c.print_saved_entity(record_of(store, "resource.recording.one"), out, include_computed=True)
+
+    asyncio.run(main())
+
+    assert out.getvalue() == recording_text_computed(log)
+
+
+def test_async_entity_tokens_join_to_text(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = write_recording_config(tmp_path, log)
+
+    async def main() -> list[xcl.highlight.Token]:
+        async with xcl.aio.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+            await c.apply(config)
+            return await c.entity_tokens(await c.find(None, "resource.recording.one"), include_computed=True)
+
+    tokens = asyncio.run(main())
+
+    assert "".join(token.text for token in tokens) == recording_text_computed(log)
+    assert all(isinstance(token.kind, int) for token in tokens)
+
+
+def test_async_print_diff_writes_change_summary(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = write_recording_config(tmp_path, log)
+    out = io.StringIO()
+
+    async def main() -> xcl.Diff:
+        async with xcl.aio.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+            return await c.diff(config)
+
+    diff = asyncio.run(main())
+    xcl.print_diff(diff, out)
+
+    assert out.getvalue() == textwrap.dedent(
+        f"""\
+          # resource.recording.one will be created
+          + resource "recording" "one" {{
+              + log   = "{log.as_posix()}"
+              + value = "first"
+            }}
+
+        Diff: 1 to create, 0 to update, 0 to replace, 0 to delete, 0 unchanged.
+        """
+    )
+    assert "".join(token.text for token in diff.tokens) == out.getvalue()
+
+
+# -- events to standard logging --------------------------------------------
+
+
+def test_async_logging_handler_records_apply_events(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = write_recording_config(tmp_path, log)
+    logger = logging.getLogger("test_aio.logging_handler")
+    logger.handlers.clear()
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    records: list[logging.LogRecord] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger.addHandler(Collect())
+
+    async def main() -> None:
+        async with xcl.aio.Config(
+            registries=[plugin_registry(recording_plugin)],
+            state_path=tmp_path / "state",
+            on_event=xcl.logging_handler(logger),
+        ) as c:
+            await c.apply(config)
+
+    asyncio.run(main())
+
+    messages = [(record.levelno, record.getMessage()) for record in records]
+    assert (logging.INFO, "apply start") in messages
+    assert (logging.INFO, "apply success") in messages
+    created = [record for record in records if record.getMessage() == "create success"]
+    assert len(created) == 1
+    assert created[0].resource == "resource.recording.one"
+    assert created[0].operation == "create"

@@ -255,7 +255,7 @@ same text Go's `xcl.EncodeEntity` writes for it:
 ```python
 app = cfg.find(App, "app.web")
 print(cfg.encode_entity(app))
-print(cfg.encode_entity(app, reveal_sensitive=True, highlight=True))
+print(cfg.encode_entity(app, reveal_sensitive=True))
 ```
 
 For an `app "web"` block that sets `image = "nginx:1.27-alpine"` and
@@ -289,9 +289,13 @@ options:
   the configuration wrote it, rather than its value. A hand-built entity has
   no references, so its values are written as they are.
 
-`highlight=True` colours the text for a terminal, and combines with each
-choice. `cfg.encode_saved_entity(record)` renders a saved record, as a state
+`cfg.encode_saved_entity(record)` renders a saved record, as a state
 store holds it and events carry it, and takes the same keywords.
+
+To print the text rather than get it, in plain text, terminal colour or any
+other format, use `cfg.print_entity(entity)` and
+`cfg.print_saved_entity(record)`, which take the same keywords; see
+[Printing and highlighting](#printing-and-highlighting).
 
 `cfg.encode_saved_entity` works at any time, including from an `on_event`
 handler while an operation runs, because it reads none of the configuration's
@@ -334,6 +338,183 @@ still changing. From a handler, render `event.data` with
 `cfg.encode_saved_entity` instead. With `xcl.aio.Config` the calls are
 `await cfg.encode_entity(entity)` and `await cfg.encode_saved_entity(record)`.
 
+## Printing and highlighting
+
+The engine lays out what a person reads, the report of a configuration
+error, a resource's configuration text and a change summary, and sends it
+as labelled text: a list of `xcl.highlight.Token`, each a piece of text
+labelled with its `xcl.highlight.Kind`, such as an attribute name or a line
+comment. Python prints it in the format you choose, the same bytes Go
+prints. Every default is plain text: the package never colours output on its
+own.
+
+### Printing errors
+
+`xcl.print_error(err)` prints any xcl error for a person, to `sys.stderr`
+unless you pass a stream, and `xcl.format_error(err)` returns the same text,
+following `traceback.print_exception` and `traceback.format_exception`. A
+configuration problem prints as the report Go prints: severity and summary,
+where it is, the numbered source lines with the fault marked, and the detail,
+wrapped at 80 columns:
+
+```python
+try:
+    cfg.apply("./config")
+except xcl.Error as err:
+    xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
+    sys.exit(1)
+```
+
+```text
+Error: Unsupported block type
+
+  on config/main.xcl line 7, in app.api, field timeout[0]:
+     5 | app "api" {
+     6 |   image = "nginx"
+     7 |   timeout {
+     8 |     seconds = 5
+     9 |   }
+
+Blocks of type "timeout" are not expected here.
+```
+
+`width=40` wraps the detail at 40 columns, and `width=0` or `width=None`
+never wraps it; source lines are never wrapped. Any other exception, and an
+xcl error holding no configuration problem, prints as its message and a line
+break.
+
+You need no code to see the report on an error you do not handle. Every xcl
+error holding a configuration problem carries its plain report as an
+exception note, so an uncaught error's traceback, `logging.exception(...)`,
+`exc_info=True`, rich tracebacks and loguru's `logger.exception` all show it
+after the message. `str(err)` stays the engine's message, Go's `Error()`: one
+line for one problem, one line per problem for a configuration error holding
+several. `err.tokens` is the report as labelled text, empty for an error
+without one.
+
+### Printing resources and change summaries
+
+```python
+cfg.print_entity(db, include_computed=True)                 # to sys.stdout
+cfg.print_saved_entity(event.data, formatter=xcl.highlight.TERMINAL)
+xcl.print_diff(cfg.diff("./config"), formatter=xcl.highlight.for_stream(sys.stdout))
+```
+
+`print_entity` and `print_saved_entity` take the four encode keywords and
+print the text `encode_entity` and `encode_saved_entity` return.
+`print_saved_entity` works from an `on_event` handler while an operation
+runs, as `encode_saved_entity` does. `cfg.entity_tokens(...)` and
+`cfg.saved_entity_tokens(...)` return the labelled text instead.
+`xcl.print_diff` prints the git-style change summary of a diff that
+`cfg.diff` returned, whose labelled text is `diff.tokens`; a `Diff` built by
+hand has none and raises `ValueError`. With `xcl.aio.Config`, the
+configuration's methods are awaited.
+
+### Output formats
+
+Every print call takes `formatter=` and `theme=`:
+
+- `xcl.highlight.PLAIN`, the default: the text as it is.
+- `xcl.highlight.TERMINAL`: terminal colour codes, reset before every line
+  break.
+- `xcl.highlight.HTML`: `<pre class="xcl">` with a classed `<span>` per
+  piece, for a page that styles it.
+- `xcl.highlight.HTML_INLINE`: the same markup with inline `style=`
+  attributes, for an email.
+- `xcl.highlight.SVG`: a standalone image.
+
+`xcl.highlight.for_stream(stream)` chooses for you: `TERMINAL` when the
+stream is a terminal and `NO_COLOR` is unset or empty, `PLAIN` otherwise.
+
+### Themes
+
+A theme says how each kind looks, as the style strings Go uses: `bold`,
+`italic`, `underline`, `dim`, a colour written `#rrggbb` or named (`red`,
+`bright-black`, ...) and a background `bg:#rrggbb`. Give only the kinds you
+want to change; a kind a theme does not style takes its category's style,
+then `TEXT`'s, so a comment style covers line, hash and block comments:
+
+```python
+from xcl.highlight import DEFAULT_THEME, Kind, validate
+
+theme = DEFAULT_THEME | {Kind.ATTRIBUTE: "#ff8800", Kind.COMMENT: "italic #6a9955"}
+validate(theme)                  # raises xcl.InvalidStyleError naming each unknown word
+cfg.print_entity(db, formatter=xcl.highlight.TERMINAL, theme=theme)
+```
+
+`DEFAULT_THEME` cannot be changed in place; `|` gives a new theme. Printing
+with a style word it does not understand skips the word rather than failing.
+
+To use a VS Code colour theme, load it; only the kinds it styles come back,
+so extend the default to keep the rest:
+
+```python
+theme = DEFAULT_THEME | xcl.highlight.load_vscode_theme("monokai.json")
+```
+
+The engine converts the theme with the same scopes the xcl VS Code extension
+uses, so attribute names take the theme's property colour. A theme the
+engine cannot use raises `xcl.InvalidThemeError`, whose `details["reason"]`
+says what was wrong.
+
+### On a website
+
+`xcl.highlight.HTML` writes the same class names as Go, such as
+`xcl-attribute` and `xcl-comment xcl-line-comment`, under a `<pre
+class="xcl">`. `xcl.highlight.css(theme)` generates a stylesheet for them
+from any theme, identical to Go's:
+
+```python
+Path("static/xcl.css").write_text(xcl.highlight.css(DEFAULT_THEME))
+html = xcl.format_error(err, formatter=xcl.highlight.HTML)   # already escaped
+```
+
+### Writing a format
+
+A format is any object with a `format(out, theme, tokens)` method, the
+`xcl.highlight.Formatter` protocol, and every print call accepts one. It is
+given the whole labelled text at once and writes to the stream it is given.
+`xcl.highlight.style_for(theme, kind)` resolves a kind's style through its
+category. A kind from a newer engine that this package does not know arrives
+as its number and falls back to its category:
+
+```python
+class Markdown:
+    def format(self, out, theme, tokens):
+        out.write("```hcl\n" + "".join(token.text for token in tokens) + "```\n")
+
+
+cfg.print_entity(db, formatter=Markdown())
+```
+
+## Logging
+
+One line sends a configuration's events to Python's standard logging, at
+the levels and with the messages Go's `events.SlogHandler` uses:
+
+```python
+cfg = xcl.Config(registries=[local], on_event=xcl.logging_handler(logging.getLogger("app")))
+```
+
+A plugin's log event is written at its own level with its own message;
+every other event is written as `"<operation> <phase>"`, such as
+`"create success"`, at info, at error for an error and at warning for a
+blocked entity. The logger's level is checked first. Each record carries the
+event's time and, as attributes, `source`, `operation`, `phase`, `resource`,
+`type`, `file`, `duration`, `error` and the event's details, plus
+`xcl_event`, the `xcl.Event` itself. JSON and key-value formatters, structlog
+through its `ProcessorFormatter` and loguru through its standard logging
+integration see them as fields, with no adapter.
+
+To show a logged xcl error's report in colour on a console, give the handler
+`xcl.highlight.LogFormatter`, which takes `logging.Formatter`'s own options
+and writes the traceback followed by the report in the format you choose:
+
+```python
+handler = logging.StreamHandler()
+handler.setFormatter(xcl.highlight.LogFormatter("%(levelname)s %(message)s", formatter=xcl.highlight.for_stream(sys.stderr)))
+```
+
 ## Asyncio
 
 `xcl.aio.Config` offers every operation and lookup as an awaitable that
@@ -372,6 +553,17 @@ asyncio task, so a web service keeps answering requests during a long
 apply. Cancelling the task that awaits an operation cancels the engine's
 work: no further provider call starts, the progress made is saved, and
 `asyncio.CancelledError` is raised once the engine has stopped.
+
+## Migrating from highlight=
+
+`highlight=` has been removed from `encode_entity` and `encode_saved_entity`,
+on `xcl.Config` and `xcl.aio.Config`; passing it raises `TypeError` as an
+unexpected keyword argument. To print coloured configuration text, use
+`cfg.print_entity(entity, formatter=xcl.highlight.TERMINAL)` (or
+`cfg.print_saved_entity(record, ...)`), or `formatter=xcl.highlight.for_stream(sys.stdout)`
+to colour only on a terminal. To get the text with its labels for your own
+format, use `cfg.entity_tokens(entity)`. `encode_entity` and
+`encode_saved_entity` return plain text, as they did without `highlight=`.
 
 ## Migrating from string event data levels
 
@@ -443,6 +635,10 @@ from an engine that reports them, its `detail` on its own and the `entity` and
 `field` it is in), `xcl.PluginVerificationError`,
 `xcl.FunctionNameClashError`, `xcl.CancelledError` and so on. A plugin
 release whose signature does not verify against the trusted keys is refused.
+An error holding configuration problems also carries their report, shown on
+tracebacks and logged exceptions and printed by `xcl.print_error`; see
+[Printing errors](#printing-errors). `xcl.InvalidStyleError` and
+`xcl.InvalidThemeError` report a theme that cannot be used.
 
 Two errors concern the engine itself. `xcl.EngineNotFoundError` is raised on
 first use when the installed package does not hold its engine, and names

@@ -28,6 +28,7 @@ from xcl._core import core_pb2
 from xcl._functions import call_function, failed_result
 from xcl.diff import Diff
 from xcl.events import Event
+from xcl.highlight._kinds import _tokens_from_proto
 
 # POLL_WAIT_MS is how long one Poll may block; it bounds how quickly a cancel
 # is noticed on the Python side
@@ -128,7 +129,7 @@ class Operation:
         if self._finished.HasField("error"):
             raise _errors.from_proto(self._finished.error)
         if self._finished.diff_json:
-            return Diff._from_json(self._finished.diff_json)
+            return Diff._from_json(self._finished.diff_json, tokens=tuple(_tokens_from_proto(self._finished.diff_tokens)))
         return None
 
 

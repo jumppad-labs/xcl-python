@@ -106,6 +106,16 @@ class InvalidApp:
     meta: xcl.Meta | None = None
 
 
+# -- unsupported_block --------------------------------------------------------
+
+
+@dataclass
+class UnsupportedBlockApp:
+    image: str
+    endpoint: xcl.Computed[str] = None
+    meta: xcl.Meta | None = None
+
+
 # -- singletons ---------------------------------------------------------------
 
 
@@ -154,6 +164,7 @@ FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
     "outputs": [("app", None, OutputsApp)],
     "plugin_entities": [],
     "invalid": [("app", None, InvalidApp)],
+    "unsupported_block": [("app", None, UnsupportedBlockApp)],
     "singletons": [("runner", None, SingletonsRunner), ("agent", None, SingletonsAgent)],
     "encode": [("store", "postgres", EncodeStore), ("service", None, EncodeService)],
 }

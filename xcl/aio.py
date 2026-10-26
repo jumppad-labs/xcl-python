@@ -16,8 +16,9 @@ import concurrent.futures
 import inspect
 import json
 import os
+import sys
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, Optional
+from typing import Any, Optional, TextIO
 
 from xcl import _errors
 from xcl._client import Client, default_client
@@ -26,10 +27,13 @@ from xcl._classes import ClassMap
 from xcl._functions import decode_args, encode_result, failed_result
 from xcl._poll import POLL_WAIT_MS, Operation, StateStore, answer_state
 from xcl._schema import record_bytes
-from xcl.config import _encode_options, _event_data_level
+from xcl.config import _encode_entity_request, _encode_options, _encode_saved_entity_request, _event_data_level
 from xcl.config import Config as _SyncConfig
 from xcl.diff import Diff
 from xcl.events import Event, EventDataLevel
+from xcl.highlight._formatters import PLAIN, Formatter
+from xcl.highlight._kinds import Token, _tokens_from_proto
+from xcl.highlight._theme import DEFAULT_THEME, Theme
 from xcl.mask import Mask
 
 
@@ -262,18 +266,57 @@ class Config:
         include_empty: bool = False,
         reveal_sensitive: bool = False,
         show_references: bool = False,
-        highlight: bool = False,
     ) -> str:
         """An entity rendered as configuration text, refused while an operation runs; see :meth:`xcl.Config.encode_entity`."""
         # the record is built first, so a value that is not an entity fails
         # before anything reaches the engine
-        request = core_pb2.EncodeEntityRequest(
-            entity=record_bytes(entity, self._classes),
-            highlight=highlight,
-            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        request = _encode_entity_request(
+            record_bytes(entity, self._classes),
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=False,
         )
         response = await self._lookup("EncodeEntity", request)
         return response.text.decode()
+
+    async def entity_tokens(
+        self,
+        entity: object,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of an entity's configuration text; see :meth:`xcl.Config.entity_tokens`."""
+        request = _encode_entity_request(
+            record_bytes(entity, self._classes),
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=True,
+        )
+        response = await self._lookup("EncodeEntity", request)
+        return _tokens_from_proto(response.tokens)
+
+    async def print_entity(
+        self,
+        entity: object,
+        file: TextIO | None = None,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        formatter: Formatter = PLAIN,
+        theme: Theme = DEFAULT_THEME,
+    ) -> None:
+        """Print an entity to ``file`` (``sys.stdout`` by default) as configuration text; see :meth:`xcl.Config.print_entity`."""
+        tokens = await self.entity_tokens(
+            entity,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+        formatter.format(sys.stdout if file is None else file, theme, tokens)
 
     async def encode_saved_entity(
         self,
@@ -283,16 +326,55 @@ class Config:
         include_empty: bool = False,
         reveal_sensitive: bool = False,
         show_references: bool = False,
-        highlight: bool = False,
     ) -> str:
         """A saved record rendered as configuration text, allowed during an operation, including from an event handler; see :meth:`xcl.Config.encode_saved_entity`."""
-        request = core_pb2.EncodeSavedEntityRequest(
-            entity=bytes(data),
-            highlight=highlight,
-            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        request = _encode_saved_entity_request(
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=False,
         )
         response = await self._lookup("EncodeSavedEntity", request)
         return response.text.decode()
+
+    async def saved_entity_tokens(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of a saved record's configuration text, allowed during an operation; see :meth:`xcl.Config.saved_entity_tokens`."""
+        request = _encode_saved_entity_request(
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=True,
+        )
+        response = await self._lookup("EncodeSavedEntity", request)
+        return _tokens_from_proto(response.tokens)
+
+    async def print_saved_entity(
+        self,
+        data: bytes,
+        file: TextIO | None = None,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        formatter: Formatter = PLAIN,
+        theme: Theme = DEFAULT_THEME,
+    ) -> None:
+        """Print a saved record to ``file`` (``sys.stdout`` by default) as configuration text, allowed during an operation; see :meth:`xcl.Config.print_saved_entity`."""
+        tokens = await self.saved_entity_tokens(
+            data,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+        formatter.format(sys.stdout if file is None else file, theme, tokens)
 
 
 async def _call_maybe_async(fn: Callable[..., Any], *args: Any) -> Any:

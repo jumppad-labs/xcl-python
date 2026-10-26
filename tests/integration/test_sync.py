@@ -7,7 +7,9 @@ provider is needed, the fixture plugins built from the xcl checkout.
 
 from __future__ import annotations
 
+import io
 import json
+import logging
 import re
 import signal
 import subprocess
@@ -783,6 +785,144 @@ def test_invalid_config_raises_config_error_with_positions(tmp_path):
     assert "endpoint" in by_line[4]
 
 
+# -- printing an error's report ---------------------------------------------
+
+# the nested timeout block sync_app does not declare opens on line 7
+UNSUPPORTED_BLOCK = """
+sync_app "web" {
+  image = "nginx"
+}
+
+sync_app "api" {
+  image = "nginx"
+  timeout {
+    seconds = 5
+  }
+}
+"""
+
+
+def unsupported_block_error(config: Path) -> xcl.ConfigError:
+    """The error applying ``config`` raises, caught."""
+    with xcl.Config(registries=[registry()]) as c:
+        with pytest.raises(xcl.ConfigError) as raised:
+            c.apply(config)
+    return raised.value
+
+
+def test_unsupported_block_report_printed(tmp_path):
+    config = write_config(tmp_path, UNSUPPORTED_BLOCK)
+    out = io.StringIO()
+
+    with xcl.Config(registries=[registry()]) as c:
+        try:
+            c.apply(config)
+        except xcl.ConfigError as err:
+            xcl.print_error(err, file=out)
+
+    lines = out.getvalue().split("\n")
+    assert lines[0] == "Error: Unsupported block type"
+    assert lines[1] == ""
+    assert lines[2] == f"  on {config} line 7, in sync_app.api, field timeout[0]:"
+    assert "line 7" in lines[2]
+    assert "sync_app.api" in lines[2]
+    assert lines[3:8] == [
+        '     5 | sync_app "api" {',
+        '     6 |   image = "nginx"',
+        "     7 |   timeout {",
+        "     8 |     seconds = 5",
+        "     9 |   }",
+    ]
+    assert lines[8] == ""
+    assert lines[9] == 'Blocks of type "timeout" are not expected here.'
+
+
+def test_unsupported_block_report_as_string(tmp_path):
+    config = write_config(tmp_path, UNSUPPORTED_BLOCK)
+    err = unsupported_block_error(config)
+    out = io.StringIO()
+
+    xcl.print_error(err, file=out)
+
+    assert xcl.format_error(err) == out.getvalue()
+
+
+def test_unsupported_block_error_str_is_one_line(tmp_path):
+    config = write_config(tmp_path, UNSUPPORTED_BLOCK)
+
+    err = unsupported_block_error(config)
+
+    assert "\n" not in str(err)
+    assert str(err) == (
+        f"{config}:7,3-10: Unsupported block type; "
+        'Blocks of type "timeout" are not expected here. (sync_app.api, timeout[0])'
+    )
+
+
+def test_unsupported_block_logged_with_traceback(tmp_path):
+    config = write_config(tmp_path, UNSUPPORTED_BLOCK)
+    out = io.StringIO()
+    log = logging.getLogger("xcl.tests.unsupported_block")
+    log.propagate = False
+    handler = logging.StreamHandler(out)
+    log.addHandler(handler)
+
+    try:
+        with xcl.Config(registries=[registry()]) as c:
+            try:
+                c.apply(config)
+            except xcl.ConfigError:
+                log.exception("apply failed")
+    finally:
+        log.removeHandler(handler)
+
+    logged = out.getvalue()
+    report = (
+        "Error: Unsupported block type\n"
+        "\n"
+        f"  on {config} line 7, in sync_app.api, field timeout[0]:\n"
+        '     5 | sync_app "api" {\n'
+        '     6 |   image = "nginx"\n'
+        "     7 |   timeout {\n"
+        "     8 |     seconds = 5\n"
+        "     9 |   }\n"
+        "\n"
+        'Blocks of type "timeout" are not expected here.\n'
+    )
+    assert logged.startswith("apply failed\n")
+    assert "Traceback (most recent call last)" in logged
+    assert logged.index("Traceback (most recent call last)") < logged.index("Error: Unsupported block type")
+    assert logged.endswith(report)
+
+
+def test_unsupported_block_uncaught_prints_traceback_then_report(tmp_path):
+    config = write_config(tmp_path, UNSUPPORTED_BLOCK)
+    report = xcl.format_error(unsupported_block_error(config)).rstrip("\n") + "\n"
+
+    result = run_script(
+        f"""
+        import xcl
+        from sync_entities import registry
+        with xcl.Config(registries=[registry()]) as c:
+            c.apply({str(config)!r})
+        """
+    )
+
+    assert result.returncode != 0
+    assert result.stderr.startswith("Traceback")
+    assert result.stderr.endswith(report)
+
+
+def test_error_tokens_join_to_plain_report(tmp_path):
+    config = write_config(tmp_path, UNSUPPORTED_BLOCK)
+
+    err = unsupported_block_error(config)
+
+    assert err.tokens
+    assert "".join(token.text for token in err.tokens) == xcl.format_error(err, width=0)
+    assert all(isinstance(token.kind, int) for token in err.tokens)
+
+
 # -- collections of entities -----------------------------------------------
 
 
@@ -823,7 +963,7 @@ def test_entity_count(tmp_path):
     assert after == 2
 
 
-def test_encode_saved_entity_text_and_highlight(tmp_path):
+def test_encode_saved_entity_text(tmp_path):
     config = write_config(tmp_path, WEB)
     store = MemoryStore()
 
@@ -831,13 +971,11 @@ def test_encode_saved_entity_text_and_highlight(tmp_path):
         c.apply(config)
         record = store.record("sync_app.web")
         plain = c.encode_saved_entity(record)
-        coloured = c.encode_saved_entity(record, highlight=True)
 
     assert plain.startswith('sync_app "web" {')
     assert re.search(r'image\s+= "nginx"', plain)
     assert plain.endswith("}\n")
     assert "\x1b[" not in plain
-    assert "\x1b[" in coloured
 
 
 def test_encode_saved_variable_record_is_not_encodable(tmp_path):
@@ -971,17 +1109,9 @@ module "leaf" {
 }
 """
 
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
 def headings(text: str) -> list[str]:
     """The lines of ``text`` that open a top-level block."""
     return re.findall(r"^\S.*\{$", text, re.MULTILINE)
-
-
-def strip_colour(text: str) -> str:
-    """``text`` with the terminal colour codes removed."""
-    return ANSI.sub("", text)
 
 
 def recording_text(log: Path, *, computed: bool) -> str:
@@ -1267,40 +1397,6 @@ def test_encode_entity_sensitive_template_shown_with_references_and_reveal(tmp_p
         text = c.encode_entity(c.find(SecretApp, "secret_app.tmpl"), show_references=True, reveal_sensitive=True)
 
     assert text == 'secret_app "tmpl" {\n  image    = "nginx"\n  password = "pre-${secret_app.base.note}"\n}\n'
-
-
-def test_encode_entity_highlight_off_by_default(tmp_path):
-    config = write_config(tmp_path, ENCODE_CONFIG)
-
-    with xcl.Config(registries=[registry()]) as c:
-        c.apply(config)
-        text = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.main"))
-
-    assert "\x1b[" not in text
-
-
-def test_encode_entity_highlight_strips_to_plain(tmp_path):
-    config = write_config(tmp_path, ENCODE_CONFIG)
-
-    with xcl.Config(registries=[registry()]) as c:
-        c.apply(config)
-        coloured = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.main"), highlight=True)
-
-    assert "\x1b[" in coloured
-    assert strip_colour(coloured) == DATABASE_TEXT
-
-
-def test_encode_entity_highlight_matches_saved_record(tmp_path):
-    config = write_config(tmp_path, ENCODE_CONFIG)
-    store = MemoryStore()
-
-    with xcl.Config(registries=[registry()], state_store=store) as c:
-        c.apply(config)
-        live = c.encode_entity(c.find(SyncDatabase, "sync_database.postgres.main"), highlight=True)
-        saved = c.encode_saved_entity(store.record("sync_database.postgres.main"), highlight=True)
-
-    assert "\x1b[" in live
-    assert live == saved
 
 
 def test_encode_entity_shows_edited_value(tmp_path):
@@ -1889,3 +1985,294 @@ def test_keyboard_interrupt_cancels_apply(tmp_path, slow_plugin):
     assert "completed" not in stdout
     assert "state:True" in stdout
     assert elapsed < 6
+
+
+# -- printing resources and change summaries --------------------------------
+
+
+class RecordingFormatter:
+    """A format of the caller's own: records every call and writes each token as ``[kind]text``."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, object, list[xcl.highlight.Token]]] = []
+
+    def format(self, out, theme, tokens) -> None:
+        self.calls.append((out, theme, list(tokens)))
+        for token in tokens:
+            out.write(f"[{int(token.kind)}]{token.text}")
+
+
+def test_print_entity_with_computed_from_lookup(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    out = io.StringIO()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        c.apply(config)
+        c.print_entity(c.find(None, "resource.recording.one"), out, include_computed=True)
+
+    assert out.getvalue() == recording_text(log, computed=True)
+
+
+def test_print_saved_entity_with_computed(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    store = MemoryStore()
+    out = io.StringIO()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_store=store) as c:
+        c.apply(config)
+        c.print_saved_entity(store.record("resource.recording.one"), out, include_computed=True)
+
+    assert out.getvalue() == recording_text(log, computed=True)
+
+
+def test_print_entity_in_terminal_colour_strips_to_plain(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    out = io.StringIO()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        c.apply(config)
+        c.print_entity(c.find(None, "resource.recording.one"), out, include_computed=True, formatter=xcl.highlight.TERMINAL)
+
+    assert "\x1b[34mvalue\x1b[0m" in out.getvalue()
+    assert re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()) == recording_text(log, computed=True)
+
+
+def test_entity_tokens_join_to_text(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        c.apply(config)
+        tokens = c.entity_tokens(c.find(None, "resource.recording.one"), include_computed=True)
+
+    assert "".join(token.text for token in tokens) == recording_text(log, computed=True)
+    assert all(isinstance(token.kind, int) for token in tokens)
+    assert xcl.highlight.Token(xcl.highlight.Kind.ATTRIBUTE, "value") in tokens
+
+
+def test_saved_entity_tokens_join_to_text(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    store = MemoryStore()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_store=store) as c:
+        c.apply(config)
+        tokens = c.saved_entity_tokens(store.record("resource.recording.one"), include_computed=True)
+
+    assert "".join(token.text for token in tokens) == recording_text(log, computed=True)
+    assert all(isinstance(token.kind, int) for token in tokens)
+    assert xcl.highlight.Token(xcl.highlight.Kind.BLOCK_TYPE, "resource") in tokens
+
+
+def test_print_diff_writes_change_summary(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    out = io.StringIO()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        diff = c.diff(config)
+        xcl.print_diff(diff, out)
+
+    assert out.getvalue() == textwrap.dedent(
+        f"""\
+          # resource.recording.one will be created
+          + resource "recording" "one" {{
+              + log   = "{log.as_posix()}"
+              + value = "first"
+            }}
+
+        Diff: 1 to create, 0 to update, 0 to replace, 0 to delete, 0 unchanged.
+        """
+    )
+
+
+def test_diff_tokens_join_to_change_summary(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    out = io.StringIO()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        diff = c.diff(config)
+        xcl.print_diff(diff, out)
+
+    assert "".join(token.text for token in diff.tokens) == out.getvalue()
+    assert all(isinstance(token.kind, int) for token in diff.tokens)
+    assert xcl.highlight.Token(xcl.highlight.Kind.INSERTED, "+") in diff.tokens
+
+
+def test_custom_formatter_receives_whole_text_for_error(tmp_path):
+    err = unsupported_block_error(write_config(tmp_path, UNSUPPORTED_BLOCK))
+    formatter = RecordingFormatter()
+    out = io.StringIO()
+
+    xcl.print_error(err, out, formatter=formatter)
+
+    assert len(formatter.calls) == 1
+    assert formatter.calls[0][0] is out
+    assert formatter.calls[0][2] == err.tokens
+    assert out.getvalue().startswith("[1301]Error[1401]: Unsupported block type")
+
+
+def test_custom_formatter_receives_whole_text_for_entity(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    formatter = RecordingFormatter()
+    out = io.StringIO()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        c.apply(config)
+        found = c.find(None, "resource.recording.one")
+        c.print_entity(found, out, include_computed=True, formatter=formatter)
+        tokens = c.entity_tokens(found, include_computed=True)
+
+    assert len(formatter.calls) == 1
+    assert formatter.calls[0][0] is out
+    assert formatter.calls[0][2] == tokens
+    assert out.getvalue().startswith('[101]resource[0] [201]"recording"[0] [202]"one"')
+
+
+def test_custom_formatter_receives_whole_text_for_diff(tmp_path, recording_plugin):
+    log = tmp_path / "recording.log"
+    config = recording_config(tmp_path, log, "first")
+    formatter = RecordingFormatter()
+    out = io.StringIO()
+
+    with xcl.Config(registries=[plugin_registry(recording_plugin)], state_path=tmp_path / "state") as c:
+        diff = c.diff(config)
+        xcl.print_diff(diff, out, formatter=formatter)
+
+    assert len(formatter.calls) == 1
+    assert formatter.calls[0][0] is out
+    assert formatter.calls[0][2] == list(diff.tokens)
+    assert out.getvalue().startswith("[0]  [1102]# resource.recording.one will be created")
+
+
+# -- VS Code colour themes ----------------------------------------------------
+
+ORANGE_PROPERTIES_THEME = {
+    "name": "Orange properties",
+    "type": "dark",
+    "tokenColors": [
+        {"scope": "variable.other.property", "settings": {"foreground": "#ff8800"}},
+    ],
+}
+
+
+def test_vscode_theme_colours_attribute_names_orange(tmp_path):
+    theme_path = tmp_path / "theme.json"
+    theme_path.write_text(json.dumps(ORANGE_PROPERTIES_THEME))
+    config = write_config(tmp_path, WEB)
+    out = io.StringIO()
+
+    theme = xcl.highlight.DEFAULT_THEME | xcl.highlight.load_vscode_theme(theme_path)
+    with xcl.Config(registries=[registry()]) as c:
+        c.apply(config)
+        c.print_entity(c.find(SyncApp, "sync_app.web"), out, formatter=xcl.highlight.TERMINAL, theme=theme)
+
+    assert "\x1b[38;2;255;136;0mimage\x1b[0m" in out.getvalue()
+
+
+def test_vscode_theme_styles_only_the_kinds_it_colours(tmp_path):
+    theme_path = tmp_path / "theme.json"
+    theme_path.write_text(json.dumps(ORANGE_PROPERTIES_THEME))
+
+    theme = xcl.highlight.load_vscode_theme(theme_path)
+
+    assert theme == {xcl.highlight.Kind.ATTRIBUTE: "#ff8800"}
+
+
+def test_vscode_theme_loads_without_configuration(tmp_path):
+    theme_path = tmp_path / "theme.json"
+    theme_path.write_text(json.dumps(ORANGE_PROPERTIES_THEME))
+
+    result = run_script(
+        f"""
+        import xcl.highlight
+        print(xcl.highlight.load_vscode_theme({str(theme_path)!r}))
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "{<Kind.ATTRIBUTE: 300>: '#ff8800'}\n"
+
+
+def test_unusable_vscode_theme_raises_invalid_theme_error(tmp_path):
+    theme_path = tmp_path / "theme.json"
+    theme_path.write_text(
+        json.dumps({"tokenColors": [{"scope": "variable.other.property", "settings": {"foreground": "#zz0000"}}]})
+    )
+
+    with pytest.raises(xcl.InvalidThemeError) as raised:
+        xcl.highlight.load_vscode_theme(theme_path)
+
+    assert raised.value.details["reason"] == 'tokenColors[0].settings.foreground "#zz0000" is not a colour'
+
+
+# -- events to standard logging --------------------------------------------
+
+
+class CollectRecords(logging.Handler):
+    """A logging handler that keeps every record it is given."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def test_logging_handler_records_apply_events(tmp_path):
+    config = write_config(tmp_path, WEB)
+    logger = logging.getLogger("test_sync.logging_handler")
+    logger.handlers.clear()
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    collect = CollectRecords()
+    logger.addHandler(collect)
+
+    with xcl.Config(registries=[registry()], on_event=xcl.logging_handler(logger)) as c:
+        c.apply(config)
+
+    messages = [(record.levelno, record.getMessage()) for record in collect.records]
+    assert (logging.INFO, "apply start") in messages
+    assert (logging.INFO, "apply success") in messages
+    created = [record for record in collect.records if record.getMessage() == "create success"]
+    assert len(created) == 1
+    assert created[0].levelno == logging.INFO
+    assert created[0].resource == "sync_app.web"
+    assert created[0].operation == "create"
+    assert created[0].xcl_event.resource_id == "sync_app.web"
+
+
+# -- logged errors in a chosen format ------------------------------------------
+
+
+def test_log_formatter_colours_real_report(tmp_path):
+    config = write_config(tmp_path, UNSUPPORTED_BLOCK)
+    out = io.StringIO()
+    log = logging.getLogger("xcl.tests.log_formatter")
+    log.propagate = False
+    handler = logging.StreamHandler(out)
+    handler.setFormatter(xcl.highlight.LogFormatter(formatter=xcl.highlight.TERMINAL))
+    log.addHandler(handler)
+
+    try:
+        with xcl.Config(registries=[registry()]) as c:
+            try:
+                c.apply(config)
+            except xcl.ConfigError as err:
+                log.exception("apply failed")
+                plain = xcl.format_error(err)
+    finally:
+        log.removeHandler(handler)
+
+    logged = out.getvalue()
+    stripped = re.sub(r"\x1b\[[0-9;]*m", "", logged)
+    assert "\x1b[1;31mError\x1b[0m" in logged
+    assert logged.index("Traceback (most recent call last)") < logged.index("\x1b[1;31mError\x1b[0m")
+    assert stripped.endswith(plain.rstrip("\n") + "\n")
+    assert stripped.count('\nBlocks of type "timeout" are not expected here.') == 1

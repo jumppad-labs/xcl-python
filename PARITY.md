@@ -31,8 +31,11 @@ cancels on `KeyboardInterrupt`.
 | `FindOne[T](c, path...)` / `FindOneEntity(path...)` | `find_one(cls, *path)` | `await find_one(cls, *path)` |
 | `All[T](c)` | `all(cls)` | `await all(cls)` |
 | `Outputs()` | `outputs()` | `await outputs()` |
-| `EncodeEntity(value, options...)` | `encode_entity(entity, include_computed=False, include_empty=False, reveal_sensitive=False, show_references=False, highlight=False)` | `await encode_entity(entity, ...)` |
-| `EncodeSavedEntity(data, options...)` | `encode_saved_entity(data, include_computed=False, include_empty=False, reveal_sensitive=False, show_references=False, highlight=False)` | `await encode_saved_entity(data, ...)` |
+| `EncodeEntity(value, options...)` | `encode_entity(entity, include_computed=False, include_empty=False, reveal_sensitive=False, show_references=False)` | `await encode_entity(entity, ...)` |
+| `EncodeSavedEntity(data, options...)` | `encode_saved_entity(data, include_computed=False, include_empty=False, reveal_sensitive=False, show_references=False)` | `await encode_saved_entity(data, ...)` |
+| `EntityTokens(value, options...)` | `entity_tokens(entity, include_computed=False, ...)` | `await entity_tokens(entity, ...)` |
+| `PrintEntity(w, value, options...)` | `print_entity(entity, file=None, include_computed=False, ..., formatter=PLAIN, theme=DEFAULT_THEME)` | `await print_entity(entity, file=None, ...)` |
+| `EncodeSavedEntity` has no print or tokens form in Go | `saved_entity_tokens(data, ...)` and `print_saved_entity(data, file=None, ...)` | `await saved_entity_tokens(data, ...)` and `await print_saved_entity(data, file=None, ...)` |
 
 Each configuration hydrates into the classes registered on its own
 registries. Passing `None` as the class returns the class registered on the
@@ -44,14 +47,48 @@ with an unregistered `T` returns `ErrNotRegistered` in Go.
 The encoding options are keywords, all off by default: `IncludeComputed()` is
 `include_computed=True`, `IncludeEmpty()` is `include_empty=True`,
 `RevealSensitive()` is `reveal_sensitive=True` and `ShowReferences()` is
-`show_references=True`. `highlight=True` is the terminal colouring Go applies
-as `highlight.ANSI.Render(highlight.Pieces(text))`. The engine renders the text
+`show_references=True`. The engine renders the text
 through the same encoder Go uses, so it is identical to Go's for the same
 entity and choices, which the parity suite checks for every fixture. A
 looked-up entity holds only the sensitive marker, so with `reveal_sensitive`
 the engine shows its own configured value. An entity taken from an event and
 encoded after its operation is filled the same way, so it shows the engine's
 current value, where Go's event data always shows the marker.
+
+## Printing
+
+The engine lays out reports, configuration text and change summaries as
+labelled text, the same tokens Go's formatters receive, and Python's built-in
+formats write the same bytes as Go's: the parity suite compares printed
+reports, entities and change summaries for every fixture, and the formats are
+held to the reference outputs in xcl's `highlight/testdata/reference`.
+
+| Go | Python |
+|---|---|
+| `xcl.PrintError(w, err, options...)` | `xcl.print_error(err, file=None, formatter=PLAIN, theme=DEFAULT_THEME, width=80)`; `xcl.format_error(err, ...)` for a string |
+| `xcl.PrintDiff(w, d, options...)` | `xcl.print_diff(diff, file=None, formatter=PLAIN, theme=DEFAULT_THEME)` |
+| `xcl.WithFormatter(f)`, `xcl.WithTheme(t)`, `xcl.WithWidth(n)` | the `formatter=`, `theme=` and `width=` keywords |
+| `xcl.ErrorTokens(err)` | `err.tokens` |
+| `(*diff.Diff).Tokens()` | `diff.tokens`, on a diff `Config.diff` returned |
+| `%+v` on a configuration error | the error's exception note, shown on tracebacks and logged exceptions |
+| `highlight.Plain`, `Terminal`, `HTML`, `HTMLInline`, `SVG` | `xcl.highlight.PLAIN`, `TERMINAL`, `HTML`, `HTML_INLINE`, `SVG` |
+| `highlight.Formatter`, `highlight.FormatterFunc` | the `xcl.highlight.Formatter` protocol: any object with `format(out, theme, tokens)` |
+| `highlight.Kind`, `highlight.Token` | `xcl.highlight.Kind` (an `IntEnum`, the same numbers), `xcl.highlight.Token` |
+| `Kind.Parent()`, `Kind.Class()` | `Kind.parent`, `Kind.css_class`; `parent_of(n)`, `css_class_of(n)` for any number |
+| `highlight.Theme`, `highlight.DefaultTheme` | `xcl.highlight.Theme` (a mapping of kind to style string), `xcl.highlight.DEFAULT_THEME` |
+| `DefaultTheme.With(overrides)` | `DEFAULT_THEME \| {...}` |
+| `Theme.Style(kind)`, `highlight.ParseStyle(s)` | `xcl.highlight.style_for(theme, kind)`, `xcl.highlight.parse_style(s)` |
+| `Theme.Validate()` and `errors.InvalidStyleError` | `xcl.highlight.validate(theme)`, raising one `xcl.InvalidStyleError` naming every unknown word |
+| `highlight.WriteCSS(w, theme)` | `xcl.highlight.css(theme)` |
+| `highlight.For(w)` | `xcl.highlight.for_stream(stream)` |
+| `highlight.LoadVSCodeTheme(r)` and `errors.InvalidThemeError` | `xcl.highlight.load_vscode_theme(path_or_bytes)`, converted by the engine, and `xcl.InvalidThemeError` |
+
+## Logging
+
+| Go | Python |
+|---|---|
+| `events.SlogHandler(logger)` | `xcl.logging_handler(logger=None)`: the same levels, messages and attribute names, on standard `logging` records, plus `xcl_event` |
+| a slog handler printing an error's report | `xcl.highlight.LogFormatter(..., formatter=, theme=, width=)` |
 
 ## Configuration options
 
@@ -92,3 +129,5 @@ current value, where Go's event data always shows the marker.
 | `As[T](entity)` | A lookup takes the class to return; `find(cls, address)` is the conversion. |
 | `GetResources()` / `ResourceCount()` | Deprecated in Go in favour of `Entities()` / `EntityCount()`. |
 | `Event.Entity()` through a Go type | `xcl.Event.entity()` hydrates the class registered on the configuration that emitted the event, or `xcl.Entity`. |
+| `highlight.Tokenize(text)` | Python never lexes configuration: labelled text comes from the engine, through `entity_tokens`, `err.tokens` and `diff.tokens`. |
+| `Kind.Scope()` | Scopes are used only to convert a VS Code theme, which the engine does for `load_vscode_theme`. |
