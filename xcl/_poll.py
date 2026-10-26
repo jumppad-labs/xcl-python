@@ -70,6 +70,9 @@ class Handlers:
     store: Optional[Any] = None
     on_event: Optional[Callable[[Event], Any]] = None
     classes: Optional[ClassMap] = None
+    # config is the configuration whose operations these handlers answer,
+    # attached to every event it delivers
+    config: Optional[Any] = None
 
 
 class Operation:
@@ -198,7 +201,7 @@ def _dispatch(op: Operation, response: core_pb2.PollResponse, handlers: Handlers
     kind = response.WhichOneof("task")
     if kind == "event":
         if handlers.on_event is not None:
-            handlers.on_event(Event._from_proto(response.event, handlers.classes))
+            handlers.on_event(Event._from_proto(response.event, handlers.classes, handlers.config))
     elif kind == "state":
         op.complete(response.state.task_id, answer_state(handlers.store, response.state))
     elif kind == "function":

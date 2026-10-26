@@ -51,17 +51,26 @@ def logging_handler(logger: logging.Logger | None = None) -> Callable[[Event], N
     target = logging.getLogger("xcl") if logger is None else logger
 
     def handle(event: Event) -> None:
-        level = _level(event)
+        level = event_level(event)
         if not target.isEnabledFor(level):
             return
-        record = target.makeRecord(target.name, level, "(xcl)", 0, _message(event), (), None, extra=_extra(event))
-        _set_time(record, event)
-        target.handle(record)
+        target.handle(event_record(target, event, level, event_message(event)))
 
     return handle
 
 
-def _level(event: Event) -> int:
+# The rules below are the bridge's, shared with xcl.prettylog so the two write
+# events at the same levels, with the same messages and record fields.
+
+
+def event_record(logger: logging.Logger, event: Event, level: int, message: str) -> logging.LogRecord:
+    """The record the bridge writes ``event`` to ``logger`` as: ``message`` at ``level``, at the event's time, with its fields."""
+    record = logger.makeRecord(logger.name, level, "(xcl)", 0, message, (), None, extra=event_extra(event))
+    _set_time(record, event)
+    return record
+
+
+def event_level(event: Event) -> int:
     """The logging level Go's bridge gives the event."""
     if event.phase == "log":
         written = event.meta.get("level")
@@ -73,7 +82,7 @@ def _level(event: Event) -> int:
     return logging.INFO
 
 
-def _message(event: Event) -> str:
+def event_message(event: Event) -> str:
     """The message Go's bridge gives the event: a log event's own, else ``"<operation> <phase>"``."""
     if event.phase == "log":
         message = event.meta.get("message")
@@ -81,7 +90,7 @@ def _message(event: Event) -> str:
     return f"{event.operation} {event.phase}"
 
 
-def _extra(event: Event) -> dict[str, Any]:
+def event_extra(event: Event) -> dict[str, Any]:
     """The event's fields as record attributes, in Go's order and under Go's names."""
     extra: dict[str, Any] = {}
     for key, value in (

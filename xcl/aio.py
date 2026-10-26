@@ -2,11 +2,16 @@
 
 Every operation and lookup of :class:`xcl.Config` is offered as an awaitable
 that never blocks the event loop. The engine is polled from a dedicated
-executor thread, and each task the engine posts is dispatched as an asyncio
-task: a registered ``async def`` function, event handler or state-store
-method is awaited on the loop, and a plain one runs in the default executor.
-Cancelling the awaiting task cancels the engine's work, waits for it to stop
-and save its progress, then lets the cancellation through.
+executor thread. Each state-store or function task the engine posts is
+dispatched as its own asyncio task, so they run concurrently: a registered
+``async def`` function or state-store method is awaited on the loop, and a
+plain one runs in the default executor. Events reach ``on_event`` one at a
+time, in the order the engine sent them, as they do with :class:`xcl.Config`
+and in Go: a plain handler runs in the default executor and an ``async def``
+one is awaited on the loop, and the next event waits until the handler has
+finished with the last. Cancelling the awaiting task cancels the engine's
+work, waits for it to stop and save its progress, then lets the cancellation
+through.
 """
 
 from __future__ import annotations
@@ -27,7 +32,13 @@ from xcl._classes import ClassMap
 from xcl._functions import decode_args, encode_result, failed_result
 from xcl._poll import POLL_WAIT_MS, Operation, StateStore, answer_state
 from xcl._schema import record_bytes
-from xcl.config import _encode_entity_request, _encode_options, _encode_saved_entity_request, _event_data_level
+from xcl.config import (
+    _encode_entity_request,
+    _encode_options,
+    _encode_saved_entity_request,
+    _event_data_level,
+    _saved_entity_tokens,
+)
 from xcl.config import Config as _SyncConfig
 from xcl.diff import Diff
 from xcl.events import Event, EventDataLevel
@@ -42,7 +53,10 @@ class Config:
 
     It takes the options of :class:`xcl.Config`; ``on_event``, the
     ``state_store`` methods and registered functions may be ``async def``.
-    Use it as ``async with``, or ``await close()`` when done.
+    ``on_event`` is called once per event, in the order the engine sent
+    them, never before the previous call has finished, and an operation
+    returns only once every event has been handled. Use it as
+    ``async with``, or ``await close()`` when done.
     """
 
     def __init__(
@@ -61,6 +75,9 @@ class Config:
         client: Optional[Client] = None,
     ) -> None:
         level = _event_data_level(event_data)
+        # the level the configuration was created with, which tells a
+        # handler whether an event without data is expected to have none
+        self._event_data = event_data
         self._client = client or default_client()
         self._registries = list(registries)
         self._classes = ClassMap.from_registries(self._registries)
@@ -133,15 +150,26 @@ class Config:
 
     async def _drive(self, op: Operation) -> Optional[Diff]:
         pending: set[asyncio.Task[Any]] = set()
+        # events go to one consumer, which hands them to on_event one at a
+        # time and in order; it is pending like any task, so it is awaited
+        # before the operation returns and cancelled with the rest
+        events: asyncio.Queue[Optional[Event]] = asyncio.Queue()
+        if self._on_event is not None:
+            consumer = asyncio.create_task(self._deliver_events(events))
+            pending.add(consumer)
+            consumer.add_done_callback(pending.discard)
         try:
             while not op.done:
                 response = await self._in_executor(op.step, POLL_WAIT_MS)
                 if response is None:
                     continue
-                task = self._dispatch(op, response)
+                task = self._dispatch(op, response, events)
                 if task is not None:
                     pending.add(task)
                     task.add_done_callback(pending.discard)
+            # no event follows the finished task: the consumer drains what is
+            # queued, then stops
+            events.put_nowait(None)
             await asyncio.gather(*pending, return_exceptions=True)
         except asyncio.CancelledError:
             # stop the engine's work, let it save its progress, then let the
@@ -158,21 +186,36 @@ class Config:
         while not op.done:
             await self._in_executor(op.step, POLL_WAIT_MS)
 
-    def _dispatch(self, op: Operation, response: core_pb2.PollResponse) -> Optional[asyncio.Task[Any]]:
+    def _dispatch(
+        self,
+        op: Operation,
+        response: core_pb2.PollResponse,
+        events: asyncio.Queue[Optional[Event]],
+    ) -> Optional[asyncio.Task[Any]]:
         kind = response.WhichOneof("task")
         if kind == "event":
-            if self._on_event is None:
-                return None
-            return asyncio.create_task(self._handle_event(response.event))
+            if self._on_event is not None:
+                events.put_nowait(Event._from_proto(response.event, self._classes, self))
+            return None
         if kind == "state":
             return asyncio.create_task(self._handle_state(op, response.state))
         if kind == "function":
             return asyncio.create_task(self._handle_function(op, response.function))
         return None
 
-    async def _handle_event(self, event: core_pb2.Event) -> None:
+    async def _deliver_events(self, events: asyncio.Queue[Optional[Event]]) -> None:
+        """Hand each queued event to ``on_event`` in order, each call finished before the next starts, until ``None``."""
         assert self._on_event is not None
-        await _call_maybe_async(self._on_event, Event._from_proto(event, self._classes))
+        while True:
+            event = await events.get()
+            if event is None:
+                return
+            try:
+                await _call_maybe_async(self._on_event, event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a handler's failure must not affect the operation or later events
+                pass
 
     async def _handle_state(self, op: Operation, task: core_pb2.StateTask) -> None:
         result = await _answer_state_async(self._state_store, task)
@@ -353,6 +396,34 @@ class Config:
         )
         response = await self._lookup("EncodeSavedEntity", request)
         return _tokens_from_proto(response.tokens)
+
+    def _saved_entity_tokens_now(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of a saved record, asked of the engine with a blocking call on the calling thread.
+
+        Private: it is the render :mod:`xcl.prettylog` makes from an
+        ``on_event`` handler, which this configuration runs on the default
+        executor for a plain handler. The call goes straight through the
+        client, never through the single-worker executor that polls the
+        operation, so it never queues behind a waiting ``Poll``; the
+        transport matches each response to its call, so calls from
+        different threads do not wait on each other.
+        """
+        if not self._handle:
+            raise RuntimeError("the configuration is not open")
+        return _saved_entity_tokens(
+            self._client,
+            self._handle,
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        )
 
     async def print_saved_entity(
         self,

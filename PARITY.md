@@ -90,6 +90,18 @@ held to the reference outputs in xcl's `highlight/testdata/reference`.
 | `events.SlogHandler(logger)` | `xcl.logging_handler(logger=None)`: the same levels, messages and attribute names, on standard `logging` records, plus `xcl_event` |
 | a slog handler printing an error's report | `xcl.highlight.LogFormatter(..., formatter=, theme=, width=)` |
 
+Go's pretty logger is an example (`example/prettylog`) that only its
+examples import; Python's is part of the package. The parity suite compares
+what the two write for every fixture whose apply succeeds, apart from
+timestamps and durations.
+
+| Go (`example/prettylog`) | Python (`xcl.prettylog`) |
+|---|---|
+| `prettylog.Handler(w, level)` | `xcl.prettylog.handler(file=None, level=logging.INFO, *, logger=None, formatter=None)`: the same lines, and also a configuration mistake's report beneath its error line at every level, and one line saying how to turn resource data on when it is off |
+| `prettylog.LevelFromEnv()` | `xcl.prettylog.level_from_env()`, a `logging` level |
+| `prettylog.LevelEnv` | `xcl.prettylog.LEVEL_ENV` (`"XCL_LOG_LEVEL"`) |
+| `slog.Level` | a standard `logging` level `int` |
+
 ## Configuration options
 
 | Go (`xcl.NewConfig` option) | `xcl.Config(...)` and `xcl.aio.Config(...)` |

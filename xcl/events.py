@@ -67,8 +67,17 @@ class Event:
     # has none and hydrates every entity as xcl.Entity
     _classes = None
 
+    # _config is the configuration (xcl.Config or xcl.aio.Config) that
+    # delivered the event, so a handler such as xcl.prettylog can have the
+    # event's saved record rendered without the application passing the
+    # configuration in; like _classes it is not a field, so it takes no part
+    # in the event's fields, equality or repr, and an event built by hand
+    # has none. It is typed by a comment rather than an annotation, which
+    # would make it a dataclass field
+    _config = None  # type: Any
+
     @classmethod
-    def _from_proto(cls, e: core_pb2.Event, classes: Optional[ClassMap] = None) -> Event:
+    def _from_proto(cls, e: core_pb2.Event, classes: Optional[ClassMap] = None, config: Any = None) -> Event:
         meta: dict[str, Any] = {}
         if e.meta_json:
             try:
@@ -89,6 +98,7 @@ class Event:
             meta=meta,
         )
         event._classes = classes  # type: ignore[assignment]
+        event._config = config
         return event
 
     def entity(self) -> Any:

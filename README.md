@@ -515,6 +515,73 @@ handler = logging.StreamHandler()
 handler.setFormatter(xcl.highlight.LogFormatter("%(levelname)s %(message)s", formatter=xcl.highlight.for_stream(sys.stderr)))
 ```
 
+### Pretty logging
+
+`xcl.prettylog` is a ready-made pretty logger, the Python form of the one
+Go's examples share (`example/prettylog`), set up in one line. Each event is
+a readable line, and each created resource's configuration, with the values
+the provider filled in, appears beneath its creation line as it happens:
+
+```python
+cfg = xcl.Config(
+    registries=[local],
+    on_event=xcl.prettylog.handler(sys.stderr, xcl.prettylog.level_from_env()),
+    event_data=xcl.EventDataLevel.PROCESSED,   # puts each created resource on its event
+)
+```
+
+```text
+3:04PM INFO apply start source=core operation=apply phase=start
+3:04PM INFO create start source=core operation=create phase=start resource=resource.recording.one type=recording.one file=/work/main.xcl
+3:04PM INFO create success source=core operation=create phase=success resource=resource.recording.one type=recording.one file=/work/main.xcl duration=509µs
+  resource "recording" "one" {
+    log    = "/work/log.jsonl"
+    value  = "a"
+    output = "one-a" # set by the provider
+  }
+3:04PM INFO apply success source=core operation=apply phase=success duration=5.246ms
+```
+
+Each line is the event's time, level and message, then its source,
+operation, phase, resource and other details as `key=value`, in the layout
+Go's example writes, so a Python run reads exactly as a Go run does. The
+source, operation and resource are highlighted, and the configuration is
+coloured by `xcl.highlight`'s default theme, when the stream is a terminal
+and `NO_COLOR` is unset; anything else gets plain text, or pass
+`formatter=` to choose.
+
+- **Level.** `handler(file, level)` takes a standard `logging` level,
+  `logging.INFO` when not given. `xcl.prettylog.level_from_env()` reads it
+  from `XCL_LOG_LEVEL` (`xcl.prettylog.LEVEL_ENV`), the variable Go's
+  example reads: `debug`, `info`, `warn` or `error` in any letter case, info
+  when unset or anything else.
+- **Created resources.** At info and below, beneath each `create success`
+  line, the resource's configuration is rendered from the event's saved
+  record. That needs `event_data=xcl.EventDataLevel.PROCESSED`; without it
+  one line says how to turn it on, once. Variables, outputs and modules have
+  no configuration form and show nothing, and a resource that cannot be
+  shown gets one `WARN unable to show configuration` line, and the run
+  carries on.
+- **Configuration mistakes.** Beneath the line reporting a configuration
+  mistake, at every level, comes its report: the summary, the file and line,
+  the block and field, the numbered source lines with the fault marked, and
+  the detail, each problem once.
+- **Above info**, such as `warn`, only event lines and reports are written.
+- **Your own logging.** `handler(logger=logging.getLogger("app"))` sends the
+  same lines through a logger instead of a stream: each event is one record,
+  at the event's level and time, whose message is the line and anything
+  beneath it, plain unless `formatter=` says otherwise. A handler formatting
+  `%(message)s` prints exactly what the stream would get, and the records
+  carry the event's fields as `xcl.logging_handler`'s do.
+
+The same handler works unchanged on the asyncio client, also in one line:
+
+```python
+cfg = xcl.aio.Config(registries=[local], on_event=xcl.prettylog.handler(sys.stderr), event_data=xcl.EventDataLevel.PROCESSED)
+```
+
+It never raises into the operation: a write that fails is ignored.
+
 ## Asyncio
 
 `xcl.aio.Config` offers every operation and lookup as an awaitable that
@@ -548,9 +615,15 @@ async def on_event(event):
 asyncio.run(main())
 ```
 
-The engine is polled from a thread, and each task it posts runs as an
-asyncio task, so a web service keeps answering requests during a long
-apply. Cancelling the task that awaits an operation cancels the engine's
+The engine is polled from a thread, so a web service keeps answering
+requests during a long apply. State-store calls and functions run as asyncio
+tasks, concurrently. Events reach `on_event` one at a time, in the order the
+engine sent them, as they do with `xcl.Config` and in Go: a plain handler runs
+in the default executor and an `async def` one on the loop, and the next event
+waits until the handler has finished with the last, so
+`on_event=xcl.prettylog.handler(sys.stderr)` and `xcl.logging_handler()` write
+their lines in order. (Before this release, asyncio handlers ran concurrently
+and could see events out of order.) Cancelling the task that awaits an operation cancels the engine's
 work: no further provider call starts, the progress made is saved, and
 `asyncio.CancelledError` is raised once the engine has stopped.
 

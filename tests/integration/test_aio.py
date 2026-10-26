@@ -1261,3 +1261,80 @@ def test_async_logging_handler_records_apply_events(tmp_path, recording_plugin):
     assert len(created) == 1
     assert created[0].resource == "resource.recording.one"
     assert created[0].operation == "create"
+
+
+# -- the pretty logger ------------------------------------------------------------
+
+
+def prettylog_config(directory: Path) -> Path:
+    """One recording resource, whose output the provider sets to ``one-a``."""
+    return write_config(
+        directory,
+        f"""
+        resource "recording" "one" {{
+          log = "{(directory / "log.jsonl").as_posix()}"
+          value = "a"
+        }}
+        """,
+    )
+
+
+def prettylog_normalised(text: str) -> str:
+    """``text`` with the time of each line and every duration replaced, the parts that differ between runs."""
+    text = re.sub(r"^\d{1,2}:\d{2}(AM|PM) ", "<time> ", text, flags=re.MULTILINE)
+    return re.sub(r"duration=\S+", "duration=<duration>", text)
+
+
+def test_async_prettylog_same_lines_as_sync(tmp_path, recording_plugin):
+    config = prettylog_config(tmp_path)
+    sync_out = io.StringIO()
+    with xcl.Config(
+        registries=[plugin_registry(recording_plugin)],
+        state_path=tmp_path / "sync-state",
+        on_event=xcl.prettylog.handler(sync_out),
+        event_data=xcl.EventDataLevel.PROCESSED,
+    ) as c:
+        c.apply(config)
+
+    async_out = io.StringIO()
+
+    async def main() -> None:
+        async with xcl.aio.Config(
+            registries=[plugin_registry(recording_plugin)],
+            state_path=tmp_path / "async-state",
+            on_event=xcl.prettylog.handler(async_out),
+            event_data=xcl.EventDataLevel.PROCESSED,
+        ) as c:
+            await c.apply(config)
+
+    asyncio.run(main())
+
+    assert "create success" in async_out.getvalue()
+    assert prettylog_normalised(async_out.getvalue()) == prettylog_normalised(sync_out.getvalue())
+
+
+def test_async_prettylog_configuration_follows_creation(tmp_path, recording_plugin):
+    out = io.StringIO()
+
+    async def main() -> None:
+        async with xcl.aio.Config(
+            registries=[plugin_registry(recording_plugin)],
+            state_path=tmp_path / "state",
+            on_event=xcl.prettylog.handler(out),
+            event_data=xcl.EventDataLevel.PROCESSED,
+        ) as c:
+            await c.apply(prettylog_config(tmp_path))
+
+    asyncio.run(main())
+
+    lines = out.getvalue().splitlines()
+    success = next(i for i, line in enumerate(lines) if " INFO create success " in line)
+    assert lines[success + 1] == '  resource "recording" "one" {'
+    block = []
+    for line in lines[success + 1 :]:
+        if not line.startswith(" "):
+            break
+        block.append(line)
+    assert any(re.search(r'output\s+=\s+"one-a"', line) for line in block)
+    assert re.match(r"^\d{1,2}:\d{2}(AM|PM) INFO ", lines[success + 1 + len(block)])
+
