@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, Optional
+from typing import Any, Optional, TextIO
 
 from xcl import _errors
 from xcl._client import Client, default_client
@@ -15,6 +16,9 @@ from xcl._poll import Handlers, Operation, StateStore, drive
 from xcl._schema import hydrate, record_bytes
 from xcl.diff import Diff
 from xcl.events import Event, EventDataLevel
+from xcl.highlight._formatters import PLAIN, Formatter
+from xcl.highlight._kinds import Token, _tokens_from_proto
+from xcl.highlight._theme import DEFAULT_THEME, Theme
 from xcl.mask import Mask
 
 _EVENT_DATA_WIRE: dict[EventDataLevel, core_pb2.EventDataLevel] = {
@@ -233,7 +237,6 @@ class Config:
         include_empty: bool = False,
         reveal_sensitive: bool = False,
         show_references: bool = False,
-        highlight: bool = False,
     ) -> str:
         """An entity rendered as configuration text, the same text Go's ``xcl.EncodeEntity`` writes.
 
@@ -254,8 +257,6 @@ class Config:
           edit or one set by hand, is shown as it is.
         - ``show_references`` writes each field that referred to another
           entity as the configuration wrote it, rather than its value.
-        - ``highlight`` colours the text for a terminal, as
-          :meth:`encode_saved_entity` does.
 
         Raises :class:`xcl.NotEncodableError` for a value that is not an
         entity, a variable, output or module, or a value with no
@@ -266,13 +267,73 @@ class Config:
         engine's own copy of the entity. To render from an event handler,
         use ``encode_saved_entity(event.data)``, which is allowed then.
         """
-        request = core_pb2.EncodeEntityRequest(
-            entity=record_bytes(entity, self._classes),
-            highlight=highlight,
-            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        request = _encode_entity_request(
+            record_bytes(entity, self._classes),
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=False,
         )
         response = self._client.call(self._open(), "EncodeEntity", request)
         return response.text.decode()
+
+    def entity_tokens(
+        self,
+        entity: object,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of an entity's configuration text, as Go's ``xcl.EntityTokens`` returns it.
+
+        The tokens, joined in order, are the text :meth:`encode_entity`
+        returns with the same choices, each piece labelled with its
+        :class:`xcl.highlight.Kind`, such as an attribute name or a string,
+        for a format of your own. It raises what :meth:`encode_entity`
+        raises, including :class:`xcl.OperationInProgressError` while an
+        operation runs.
+        """
+        request = _encode_entity_request(
+            record_bytes(entity, self._classes),
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=True,
+        )
+        response = self._client.call(self._open(), "EncodeEntity", request)
+        return _tokens_from_proto(response.tokens)
+
+    def print_entity(
+        self,
+        entity: object,
+        file: TextIO | None = None,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        formatter: Formatter = PLAIN,
+        theme: Theme = DEFAULT_THEME,
+    ) -> None:
+        """Print an entity to ``file`` as configuration text, in one call, as Go's ``xcl.PrintEntity`` does.
+
+        ``file`` is ``sys.stdout`` when not given. The text is the one
+        :meth:`encode_entity` returns with the same choices, written in the
+        format ``formatter`` chooses (plain text by default) and styled by
+        ``theme``; the formatter is given the whole labelled text at once::
+
+            cfg.print_entity(db, include_computed=True, formatter=xcl.highlight.for_stream(sys.stdout))
+
+        It raises what :meth:`encode_entity` raises, writing nothing; to
+        print from an event handler while an operation runs, use
+        :meth:`print_saved_entity`.
+        """
+        tokens = self.entity_tokens(
+            entity,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+        formatter.format(sys.stdout if file is None else file, theme, tokens)
 
     def encode_saved_entity(
         self,
@@ -282,7 +343,6 @@ class Config:
         include_empty: bool = False,
         reveal_sensitive: bool = False,
         show_references: bool = False,
-        highlight: bool = False,
     ) -> str:
         """A saved record, as state stores it and events carry it, rendered as configuration text.
 
@@ -293,7 +353,7 @@ class Config:
         value, ``reveal_sensitive`` each sensitive value the record holds
         for real rather than ``(sensitive)``, and ``show_references`` each
         field that referred to another entity as the configuration wrote
-        it. ``highlight`` colours the text for a terminal.
+        it.
 
         It can be called at any time, including from an ``on_event`` handler
         while an operation runs, because it reads none of the
@@ -308,13 +368,74 @@ class Config:
         for a variable, output or module, and :class:`xcl.PluginLoadError`
         when a plugin the record needs fails to load.
         """
-        request = core_pb2.EncodeSavedEntityRequest(
-            entity=bytes(data),
-            highlight=highlight,
-            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        request = _encode_saved_entity_request(
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=False,
         )
         response = self._client.call(self._open(), "EncodeSavedEntity", request)
         return response.text.decode()
+
+    def saved_entity_tokens(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of a saved record's configuration text.
+
+        The tokens, joined in order, are the text
+        :meth:`encode_saved_entity` returns with the same choices, each piece
+        labelled with its :class:`xcl.highlight.Kind`. Like
+        :meth:`encode_saved_entity`, it can be called from an ``on_event``
+        handler while an operation runs, and raises what it raises.
+        """
+        request = _encode_saved_entity_request(
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=True,
+        )
+        response = self._client.call(self._open(), "EncodeSavedEntity", request)
+        return _tokens_from_proto(response.tokens)
+
+    def print_saved_entity(
+        self,
+        data: bytes,
+        file: TextIO | None = None,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        formatter: Formatter = PLAIN,
+        theme: Theme = DEFAULT_THEME,
+    ) -> None:
+        """Print a saved record to ``file`` as configuration text, in one call.
+
+        ``file`` is ``sys.stdout`` when not given. The text is the one
+        :meth:`encode_saved_entity` returns with the same choices, in the
+        format ``formatter`` chooses (plain text by default), styled by
+        ``theme``. It can be called from an ``on_event`` handler while an
+        operation runs, so a program can print each created resource as its
+        create success event arrives::
+
+            def on_event(event: xcl.Event) -> None:
+                if event.operation == "create" and event.phase == "success" and event.data:
+                    cfg.print_saved_entity(event.data, include_computed=True)
+
+        It raises what :meth:`encode_saved_entity` raises, writing nothing.
+        """
+        tokens = self.saved_entity_tokens(
+            data,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+        formatter.format(sys.stdout if file is None else file, theme, tokens)
 
     def _hydrate(self, data: bytes, cls: Optional[type]) -> Any:
         decoded = json.loads(data)
@@ -338,6 +459,16 @@ def _encode_options(include_computed: bool, include_empty: bool, reveal_sensitiv
         reveal_sensitive=reveal_sensitive,
         show_references=show_references,
     )
+
+
+def _encode_entity_request(record: bytes, options: core_pb2.EncodeOptions, *, tokens: bool) -> core_pb2.EncodeEntityRequest:
+    """The request rendering an entity's record, asking for its labelled text too when ``tokens`` is true."""
+    return core_pb2.EncodeEntityRequest(entity=record, options=options, tokens=tokens)
+
+
+def _encode_saved_entity_request(data: bytes, options: core_pb2.EncodeOptions, *, tokens: bool) -> core_pb2.EncodeSavedEntityRequest:
+    """The request rendering a saved record, asking for its labelled text too when ``tokens`` is true."""
+    return core_pb2.EncodeSavedEntityRequest(entity=bytes(data), options=options, tokens=tokens)
 
 
 def _paths(paths: Iterable[str | os.PathLike[str]]) -> list[str]:

@@ -7,10 +7,11 @@ registered for its code, so a program catches ``xcl.NotFoundError`` rather
 than inspecting a code; an unknown code raises the base :class:`Error`, so it
 is still catchable.
 
-Six errors are raised by the binding itself, never by the engine:
+Seven errors are raised by the binding itself, never by the engine:
 :class:`ForkedProcessError`, :class:`EngineVersionError`,
 :class:`EngineNotFoundError`, :class:`EngineExitedError`,
-:class:`InternalBindingError` and :class:`RemovedNameError`.
+:class:`InternalBindingError`, :class:`RemovedNameError` and
+:class:`InvalidStyleError`.
 """
 
 from __future__ import annotations
@@ -19,7 +20,10 @@ import signal
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from os import PathLike
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xcl.highlight import Token
 
 
 class Error(Exception):
@@ -28,6 +32,16 @@ class Error(Exception):
     ``code`` is the stable code a subclass is registered for, ``message`` the
     engine's message, ``details`` the fields of the engine's detail type by
     name, and ``causes`` the errors it collects, in order.
+
+    ``tokens`` is the engine's report of the configuration problems the error
+    holds, as labelled text (a list of :class:`xcl.highlight.Token`), the
+    same report Go's ``xcl.PrintError`` prints; it is empty for an error
+    holding no configuration problem. An error with a report carries it, as
+    plain text wrapped at 80 columns, as an exception note, so an uncaught
+    error's traceback and an exception logged with its traceback show the
+    lines in question with no code at all. ``str(err)`` stays the engine's
+    message, Go's ``Error()``. :func:`xcl.print_error` prints the report in
+    any format.
     """
 
     code: str = "internal"
@@ -39,6 +53,7 @@ class Error(Exception):
         code: str | None = None,
         details: Mapping[str, str] | None = None,
         causes: Sequence[Error] = (),
+        tokens: Sequence[Token] = (),
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -46,6 +61,13 @@ class Error(Exception):
             self.code = code
         self.details: dict[str, str] = dict(details or {})
         self.causes: list[Error] = list(causes)
+        self.tokens: list[Token] = list(tokens)
+        if self.tokens:
+            # imported here: the printing modules import nothing from this
+            # one, and keeping it out of module load keeps it that way
+            from xcl._render import plain_report
+
+            self.add_note(plain_report(self.tokens))
 
     def __str__(self) -> str:
         return self.message
@@ -175,6 +197,17 @@ class MaskNotReversibleError(Error):
     """The state mask cannot recover the values it masks, so it is refused."""
 
     code = "mask_not_reversible"
+
+
+class InvalidThemeError(Error):
+    """A VS Code colour theme could not be used; ``details["reason"]`` says what was wrong and where.
+
+    ``details["source"]`` names the theme. :func:`xcl.highlight.load_vscode_theme`
+    raises it for a file that is not a colour theme, or one with a colour
+    that is not a colour.
+    """
+
+    code = "invalid_theme"
 
 
 @dataclass(frozen=True)
@@ -392,6 +425,32 @@ class RemovedNameError(Error, ImportError):
         self.name = name
 
 
+class InvalidStyleError(Error):
+    """A theme holds style words a style does not understand; ``words`` names each one.
+
+    It is raised by :func:`xcl.highlight.validate`, never by the engine.
+    ``words`` holds a ``(kind, style, word)`` for each unknown word, in the
+    order of the kinds and then of the words, and the message has one line
+    for each, as Go's joined ``InvalidStyleError`` messages do. Printing with
+    such a theme still works: the words are skipped.
+    """
+
+    code = "invalid_style"
+
+    def __init__(self, words: Sequence[tuple[int, str, str]]) -> None:
+        from xcl.highlight._kinds import _go_name
+
+        listed = tuple((kind, style, word) for kind, style, word in words)
+        message = "\n".join(f"style {_go_quote(style)} for {_go_name(kind)}: unknown word {_go_quote(word)}" for kind, style, word in listed)
+        super().__init__(message, details={"words": " ".join(word for _, _, word in listed)})
+        self.words = listed
+
+
+def _go_quote(text: str) -> str:
+    """``text`` quoted as Go's ``%q`` quotes printable text."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 class InternalBindingError(Error):
     """The engine refused a call with a negative status, which is a bug in this package."""
 
@@ -440,6 +499,7 @@ _BY_CODE: dict[str, type[Error]] = {
         NotEncodableError,
         UnrecoverableError,
         MaskNotReversibleError,
+        InvalidThemeError,
         ConfigError,
         ProviderError,
         CancelledError,
@@ -456,12 +516,15 @@ def class_for(code: str) -> type[Error]:
 
 
 def from_proto(err: Any) -> Error:
-    """Turn an ``Error`` message from the engine into the exception for its code."""
+    """Turn an ``Error`` message from the engine into the exception for its code, its report kept as ``tokens``."""
+    from xcl.highlight._kinds import _tokens_from_proto
+
     causes = [from_proto(cause) for cause in err.causes]
+    tokens = _tokens_from_proto(err.report)
     cls = class_for(err.code)
     if cls is Error:
-        return Error(err.message, code=err.code, details=dict(err.details), causes=causes)
-    return cls(err.message, details=dict(err.details), causes=causes)
+        return Error(err.message, code=err.code, details=dict(err.details), causes=causes, tokens=tokens)
+    return cls(err.message, details=dict(err.details), causes=causes, tokens=tokens)
 
 
 def _int(value: str | None) -> int:

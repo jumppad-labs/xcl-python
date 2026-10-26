@@ -64,3 +64,48 @@ def test_mypy_accepts_event_data_member(tmp_path):
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mypy_accepts_themes_built_the_documented_ways(tmp_path):
+    result = run_mypy(
+        tmp_path,
+        """
+        import io
+
+        from xcl.highlight import DEFAULT_THEME, HTML, Kind, Theme, css, style_for, validate
+
+
+        def build() -> None:
+            extended = DEFAULT_THEME | {Kind.ATTRIBUTE: "#ff8800"}
+            own = {Kind.COMMENT: "italic #6a9955"}
+            numbered = {300: "bold"}
+            annotated: Theme = {Kind.STRING: "yellow"}
+            css(extended)
+            css(own)
+            css(numbered)
+            css(annotated)
+            validate(own)
+            style_for(extended, Kind.LINE_COMMENT)
+            HTML.format(io.StringIO(), own, [])
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mypy_flags_theme_with_non_string_style(tmp_path):
+    result = run_mypy(
+        tmp_path,
+        """
+        from xcl.highlight import Kind, css
+
+
+        def build() -> None:
+            css({Kind.ATTRIBUTE: 300})
+        """,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    errors = [line for line in result.stdout.splitlines() if ": error:" in line]
+    assert len(errors) == 1, result.stdout
+    assert "program.py:5:" in errors[0]

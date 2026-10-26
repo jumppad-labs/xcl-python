@@ -24,6 +24,8 @@ from xcl._errors import (
     InvalidArgumentError,
     InvalidFunctionError,
     InvalidSavedDataError,
+    InvalidStyleError,
+    InvalidThemeError,
     InvalidTypeError,
     MaskNotReversibleError,
     NotAnEntityError,
@@ -49,9 +51,11 @@ from xcl._errors import (
 from xcl._entity import Entity, Meta
 from xcl._schema import SchemaError
 from xcl._types import UNKNOWN, Computed, Sensitive, field
+from xcl._logbridge import logging_handler
 from xcl._poll import StateStore
+from xcl._print import format_error, print_diff, print_error
 from xcl._version import __version__
-from xcl import mask
+from xcl import highlight, mask
 from xcl.config import Config
 from xcl.diff import Change, Diff, ResourceDiff, Summary
 from xcl.events import Event, EventDataLevel
@@ -70,6 +74,7 @@ __all__ = [
     "Change",
     "Summary",
     "mask",
+    "highlight",
     "Entity",
     "Meta",
     "Sensitive",
@@ -112,7 +117,13 @@ __all__ = [
     "EngineExitedError",
     "InternalBindingError",
     "RemovedNameError",
+    "InvalidStyleError",
+    "InvalidThemeError",
     "engine_version",
+    "print_error",
+    "format_error",
+    "print_diff",
+    "logging_handler",
 ]
 
 

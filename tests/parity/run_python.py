@@ -9,8 +9,14 @@ The record covers, in order: validate, diff before the apply, apply,
 entities and outputs after it, the state written, the configuration text of
 every entity under each combination of the encode choices, the diff of the
 changed configuration when the fixture has one, entities after a load in a new
-process, and destroy. Temporary paths are replaced by ``<tmp>`` and the
-fixture directory by ``<fixture>``.
+process, and destroy. It also covers what a person is shown, through the
+package's own printing and logging: the report ``xcl.format_error`` gives for
+a failed validate and apply, the text ``print_entity`` prints for every entity
+with computed values, the change summary ``xcl.print_diff`` prints for the
+diff before the apply and for the changed configuration, and the level,
+message, resource and operation of every event ``xcl.logging_handler`` writes
+up to the load. Temporary paths are replaced by ``<tmp>`` and the fixture
+directory by ``<fixture>``.
 
 With ``--load``, which the program runs itself with for the load stage, it
 loads the state in ``--state`` with the fixture's types and prints the
@@ -36,7 +42,9 @@ for _path in (_ROOT, _TESTS):
         sys.path.insert(0, _path)
 
 import argparse  # noqa: E402
+import io  # noqa: E402
 import json  # noqa: E402
+import logging  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
 import tempfile  # noqa: E402
@@ -87,12 +95,19 @@ class Fixture:
                 self.hand_built = json.load(handle)
 
 
-def new_config(fixture: Fixture, plugins: str, state_dir: str, tmp: str) -> xcl.Config:
+def new_config(
+    fixture: Fixture,
+    plugins: str,
+    state_dir: str,
+    tmp: str,
+    on_event: Optional[Callable[[xcl.Event], None]] = None,
+) -> xcl.Config:
     """The Config a fixture runs with, exactly as the Go program builds it.
 
     Its types and ``slugify`` on a local registry, the recording plugin when
-    a plugins directory is given, state in ``state_dir``, and the fixture's
-    variables with ``<tmp>`` expanded to ``tmp``.
+    a plugins directory is given, state in ``state_dir``, the fixture's
+    variables with ``<tmp>`` expanded to ``tmp``, and ``on_event``, when
+    given, receiving its events.
     """
     local = xcl.LocalRegistry()
 
@@ -113,7 +128,7 @@ def new_config(fixture: Fixture, plugins: str, state_dir: str, tmp: str) -> xcl.
             value = value.replace("<tmp>", tmp)
         variables[key] = value
 
-    return xcl.Config(registries=[local], state_path=state_dir, variables=variables)
+    return xcl.Config(registries=[local], state_path=state_dir, variables=variables, on_event=on_event)
 
 
 def attempt(operation: Callable[..., Any], *args: Any) -> tuple[Any, Optional[xcl.Error]]:
@@ -145,21 +160,34 @@ def run(fixture_dir: str, plugins: str) -> dict[str, Any]:
         n = Normaliser(tmp=tmp, fixture=fixture.dir)
         record: dict[str, Any] = {}
 
-        config = new_config(fixture, plugins, state_dir, tmp)
+        # every event the Config emits is written through the package's
+        # logging bridge to a logger that keeps each record, at every level
+        logs = LogRecorder()
+
+        config = new_config(fixture, plugins, state_dir, tmp, xcl.logging_handler(logs.logger))
 
         _, err = attempt(config.validate, fixture.main)
         record["validate"] = n.outcome(err)
-        record["diff_before"] = n.diff(*attempt(config.diff, fixture.main))
+        record["printed_validate"] = n.printed_error(err)
+        before, before_err = attempt(config.diff, fixture.main)
+        record["diff_before"] = n.diff(before, before_err)
+        record["printed_diff_before"] = n.printed_diff(before, before_err)
 
         _, apply_err = attempt(config.apply, fixture.main)
         record["apply"] = n.outcome(apply_err)
+        record["printed_apply"] = n.printed_error(apply_err)
         record["entities"] = n.entities(raw_entities(config))
         record["outputs"] = n.value(config.outputs())
         record["state"] = n.state(state_dir)
         record["encode"] = encode_section(config, fixture, state_dir, n)
+        record["printed_entities"] = printed_entities_section(config, n)
 
         if fixture.changed is not None:
-            record["diff_changed"] = n.diff(*attempt(config.diff, fixture.changed))
+            changed, changed_err = attempt(config.diff, fixture.changed)
+            record["diff_changed"] = n.diff(changed, changed_err)
+            record["printed_diff_changed"] = n.printed_diff(changed, changed_err)
+
+        record["log"] = n.log(logs.entries)
 
         if apply_err is None:
             loaded = load_in_new_process(fixture.dir, plugins, state_dir, tmp)
@@ -251,6 +279,55 @@ def encode_section(config: xcl.Config, fixture: Fixture, state_dir: str, n: Norm
         encoded[address] = texts
 
     return encoded
+
+
+def printed_entities_section(config: xcl.Config, n: Normaliser) -> dict[str, Any]:
+    """The text ``print_entity`` prints, with computed values, for every entity that is not a builtin, by address.
+
+    A failure is recorded as its outcome.
+    """
+    printed: dict[str, Any] = {}
+    for raw in raw_entities(config):
+        meta = raw.get("meta") or {}
+        if meta.get("type") in BUILTIN_TYPES:
+            continue
+        address = meta.get("id", "")
+
+        out = io.StringIO()
+        _, err = attempt(lambda: config.print_entity(config.find(None, address), out, include_computed=True))
+        printed[address] = n.outcome(err) if err is not None else n.text(out.getvalue())
+
+    return printed
+
+
+# LEVEL_NAMES names a logging level as the record does, as Go names slog's
+LEVEL_NAMES = {logging.DEBUG: "debug", logging.INFO: "info", logging.WARNING: "warn", logging.ERROR: "error"}
+
+
+class LogRecorder(logging.Handler):
+    """A logging handler that keeps each record's level, message, resource and operation, at every level.
+
+    ``logger`` is a logger of its own, at debug level, passing nothing on, so
+    the records reach no other handler.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.entries: list[dict[str, str]] = []
+        self.logger = logging.getLogger(f"xcl.parity.{id(self)}")
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.propagate = False
+        self.logger.addHandler(self)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.entries.append(
+            {
+                "level": LEVEL_NAMES.get(record.levelno, "info"),
+                "message": record.getMessage(),
+                "resource": getattr(record, "resource", ""),
+                "operation": getattr(record, "operation", ""),
+            }
+        )
 
 
 def saved_records(state_dir: str) -> dict[str, bytes]:
@@ -401,6 +478,30 @@ class Normaliser:
             return self.outcome(err)
         assert text is not None
         return self.text(text)
+
+    def printed_error(self, err: Optional[xcl.Error]) -> str:
+        """The report ``xcl.format_error`` gives for an error, plain and wrapped at 80 columns, or ``""`` for none."""
+        if err is None:
+            return ""
+        return self.text(xcl.format_error(err))
+
+    def printed_diff(self, diff: Optional[xcl.Diff], err: Optional[xcl.Error]) -> Any:
+        """The change summary ``xcl.print_diff`` prints for a diff, or the outcome the diff failed with."""
+        if err is not None:
+            return self.outcome(err)
+        assert diff is not None
+        out = io.StringIO()
+        xcl.print_diff(diff, out)
+        return self.text(out.getvalue())
+
+    def log(self, entries: list[dict[str, str]]) -> list[dict[str, str]]:
+        """The logged events with paths replaced in their messages, sorted as the Go program sorts them.
+
+        By operation, resource, level and message, so the order the events
+        arrived in does not count.
+        """
+        rendered = [dict(entry, message=self.text(entry["message"])) for entry in entries]
+        return sorted(rendered, key=lambda e: (e["operation"], e["resource"], e["level"], e["message"]))
 
     def value(self, value: Any) -> Any:
         """Any value through JSON, with the run's paths replaced."""
