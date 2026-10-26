@@ -54,7 +54,7 @@ from xcl._version import __version__
 from xcl import mask
 from xcl.config import Config
 from xcl.diff import Change, Diff, ResourceDiff, Summary
-from xcl.events import Event
+from xcl.events import Event, EventDataLevel
 from xcl.registry import GitHubRegistry, LocalRegistry
 
 __all__ = [
@@ -64,6 +64,7 @@ __all__ = [
     "GitHubRegistry",
     "StateStore",
     "Event",
+    "EventDataLevel",
     "Diff",
     "ResourceDiff",
     "Change",

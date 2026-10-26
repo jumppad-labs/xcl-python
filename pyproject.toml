@@ -35,6 +35,11 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "pytest>=8",
+  # mypy is used only by tests/unit/test_typing.py, which runs it as a user
+  # would over small programs against the installed package, to check that a
+  # user's type checker sees the package's annotations, such as event_data
+  # taking an xcl.EventDataLevel
+  "mypy>=1.11",
 ]
 # cffi is used only by the in-process route of a source build
 # (XCL_TRANSPORT=inprocess), which loads the shared library in ABI mode; the

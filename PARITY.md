@@ -63,7 +63,7 @@ current value, where Go's event data always shows the marker.
 | `WithStateMask(m)` | `state_mask=xcl.mask.aes256gcm(key)` |
 | `WithVariables(vars)` | `variables={...}` |
 | `WithEventHandler(h)` | `on_event=callable` |
-| `WithEventData(level)` | `event_data="none" \| "raw" \| "processed"` |
+| `WithEventData(level)`, `level` an `xcl.EventDataLevel` (`xcl.EventDataNone`, `xcl.EventDataRaw`, `xcl.EventDataProcessed`) | `event_data=xcl.EventDataLevel.NONE`, `.RAW` or `.PROCESSED` (an `xcl.EventDataLevel`; a string is refused) |
 | `WithEventBufferSize(n)` | `event_buffer_size=n` |
 | `WithEventMask(m)` | `event_mask=xcl.mask.hmac_sha256(key)` |
 | `WithNoEventMask()` | `no_event_mask=True` |

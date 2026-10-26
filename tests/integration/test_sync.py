@@ -320,7 +320,7 @@ def test_sensitive_redacted_in_event_data(tmp_path):
     config = write_config(tmp_path, SECRET_APP)
     events: list[xcl.Event] = []
 
-    with xcl.Config(registries=[registry()], on_event=events.append, event_data="processed") as c:
+    with xcl.Config(registries=[registry()], on_event=events.append, event_data=xcl.EventDataLevel.PROCESSED) as c:
         c.apply(config)
 
     created = [e for e in events if e.resource_id == "sync_app.web" and e.operation == "create" and e.phase == "success"]
@@ -627,7 +627,7 @@ def test_event_entity_hydrates(tmp_path):
     config = write_config(tmp_path, WEB)
     events: list[xcl.Event] = []
 
-    with xcl.Config(registries=[registry()], on_event=events.append, event_data="processed") as c:
+    with xcl.Config(registries=[registry()], on_event=events.append, event_data=xcl.EventDataLevel.PROCESSED) as c:
         c.apply(config)
 
     created = next(e for e in events if e.resource_id == "sync_app.web" and e.operation == "create")
@@ -636,6 +636,44 @@ def test_event_entity_hydrates(tmp_path):
     assert entity.image == "nginx"
     assert entity.meta.id == "sync_app.web"
     assert events[0].entity() is None
+
+
+def test_raw_event_data_carries_the_resource(tmp_path):
+    config = write_config(tmp_path, WEB)
+    events: list[xcl.Event] = []
+
+    with xcl.Config(registries=[registry()], on_event=events.append, event_data=xcl.EventDataLevel.RAW) as c:
+        c.apply(config)
+
+    created = [e for e in events if e.resource_id == "sync_app.web" and e.operation == "create"]
+    assert len(created) >= 1
+    for event in created:
+        assert event.data
+        resource = json.loads(event.data)
+        assert resource["meta"]["id"] == "sync_app.web"
+        assert resource["image"] == "nginx"
+
+
+def test_event_data_left_out_carries_nothing(tmp_path):
+    config = write_config(tmp_path, WEB)
+    events: list[xcl.Event] = []
+
+    with xcl.Config(registries=[registry()], on_event=events.append) as c:
+        c.apply(config)
+
+    assert events
+    assert all(e.data == b"" for e in events)
+
+
+def test_none_event_data_carries_nothing(tmp_path):
+    config = write_config(tmp_path, WEB)
+    events: list[xcl.Event] = []
+
+    with xcl.Config(registries=[registry()], on_event=events.append, event_data=xcl.EventDataLevel.NONE) as c:
+        c.apply(config)
+
+    assert events
+    assert all(e.data == b"" for e in events)
 
 
 def test_event_entity_is_emitting_configs_class(tmp_path):
@@ -651,8 +689,8 @@ def test_event_entity_is_emitting_configs_class(tmp_path):
         return on_event
 
     with (
-        xcl.Config(registries=[app_registry(SyncApp)], on_event=collect_into(first_entities), event_data="processed") as first,
-        xcl.Config(registries=[app_registry(PlainApp)], on_event=collect_into(second_entities), event_data="processed") as second,
+        xcl.Config(registries=[app_registry(SyncApp)], on_event=collect_into(first_entities), event_data=xcl.EventDataLevel.PROCESSED) as first,
+        xcl.Config(registries=[app_registry(PlainApp)], on_event=collect_into(second_entities), event_data=xcl.EventDataLevel.PROCESSED) as second,
     ):
         first.apply(config)
         second.apply(config)
@@ -1037,7 +1075,7 @@ def test_encode_entity_from_kept_event_entity(tmp_path):
         if event.resource_id == "sync_database.postgres.main" and event.operation == "create" and event.phase == "success":
             kept.append(event.entity())
 
-    with xcl.Config(registries=[registry()], on_event=on_event, event_data="processed") as c:
+    with xcl.Config(registries=[registry()], on_event=on_event, event_data=xcl.EventDataLevel.PROCESSED) as c:
         c.apply(config)
         texts = [c.encode_entity(entity) for entity in kept]
 
