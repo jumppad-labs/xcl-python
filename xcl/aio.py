@@ -26,10 +26,10 @@ from xcl._classes import ClassMap
 from xcl._functions import decode_args, encode_result, failed_result
 from xcl._poll import POLL_WAIT_MS, Operation, StateStore, answer_state
 from xcl._schema import record_bytes
-from xcl.config import EVENT_DATA_LEVELS, _encode_options
+from xcl.config import _encode_options, _event_data_level
 from xcl.config import Config as _SyncConfig
 from xcl.diff import Diff
-from xcl.events import Event
+from xcl.events import Event, EventDataLevel
 from xcl.mask import Mask
 
 
@@ -50,12 +50,13 @@ class Config:
         state_mask: Optional[Mask] = None,
         variables: Optional[Mapping[str, Any]] = None,
         on_event: Optional[Callable[[Event], Any]] = None,
-        event_data: str = "none",
+        event_data: EventDataLevel = EventDataLevel.NONE,
         event_buffer_size: int = 0,
         event_mask: Optional[Mask] = None,
         no_event_mask: bool = False,
         client: Optional[Client] = None,
     ) -> None:
+        level = _event_data_level(event_data)
         self._client = client or default_client()
         self._registries = list(registries)
         self._classes = ClassMap.from_registries(self._registries)
@@ -70,15 +71,13 @@ class Config:
 
         if state_path is not None and state_store is not None:
             raise ValueError("give state_path or state_store, not both")
-        if event_data not in EVENT_DATA_LEVELS:
-            raise ValueError(f'event_data must be "none", "raw" or "processed", not {event_data!r}')
 
         self._request = _SyncConfig._request(
             self,  # type: ignore[arg-type]
             state_path=state_path,
             state_mask=state_mask,
             variables=variables,
-            event_data=event_data,
+            event_data=level,
             event_buffer_size=event_buffer_size,
             event_mask=event_mask,
             no_event_mask=no_event_mask,

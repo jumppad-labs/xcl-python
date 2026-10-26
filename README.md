@@ -227,14 +227,15 @@ cfg = xcl.Config(
     state_path="./.xcl",                        # or state_store=MyStore()
     state_mask=xcl.mask.aes256gcm(key),         # encrypt sensitive values in state
     on_event=lambda e: print(e.operation, e.phase, e.resource_id),
-    event_data="processed",                     # carry the entity on events, masked
+    event_data=xcl.EventDataLevel.PROCESSED,    # carry the entity on events, masked
 )
 ```
 
 A custom state store is any object with `load() -> list[bytes]`,
 `save(records: list[bytes])`, `exists() -> bool` and `clear()`; it receives
 each entity's JSON record. The engine's events arrive at `on_event` as
-`xcl.Event`, with the same data levels and masking a Go program has;
+`xcl.Event`, with the same data levels and masking a Go program has. The
+level is an `xcl.EventDataLevel`: `NONE` (the default), `RAW` or `PROCESSED`;
 `event.entity()` hydrates the entity an event carries into the class
 registered on the configuration that emitted it, or an `xcl.Entity`.
 
@@ -343,6 +344,17 @@ asyncio task, so a web service keeps answering requests during a long
 apply. Cancelling the task that awaits an operation cancels the engine's
 work: no further provider call starts, the progress made is saved, and
 `asyncio.CancelledError` is raised once the engine has stopped.
+
+## Migrating from string event data levels
+
+`event_data` takes only an `xcl.EventDataLevel` member, the Python form of
+Go's `xcl.EventDataLevel`. A string is refused with a `TypeError`, even one
+spelled exactly like a level, and so is any other value that is not a member,
+including `None`. Code that passed a level's word passes the member of the same
+name, upper-cased, instead: `xcl.EventDataLevel.NONE`, `xcl.EventDataLevel.RAW`
+or `xcl.EventDataLevel.PROCESSED`. Code that left the option out is unaffected.
+Type checkers such as mypy and pyright flag a string passed as the level
+before the program runs.
 
 ## Migrating from xcl.Resource and @xcl.entity
 

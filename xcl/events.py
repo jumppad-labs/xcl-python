@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import enum
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -11,6 +12,30 @@ from xcl import _errors
 from xcl._classes import ClassMap
 from xcl._core import core_pb2
 from xcl._schema import hydrate
+
+
+class EventDataLevel(enum.StrEnum):
+    """What resource data lifecycle events carry: the Python form of Go's ``xcl.EventDataLevel``.
+
+    It is set with ``event_data=`` on :class:`xcl.Config` and
+    :class:`xcl.aio.Config`, which accept only a member, never a string.
+
+    ``NONE`` carries no resource data on any event. It is the default.
+
+    ``RAW`` carries the resource as it was before the provider was called, on
+    every lifecycle event.
+
+    ``PROCESSED`` carries, on a success event, the resource as xcl records it
+    in state, including the values the provider filled in. A receiver reads
+    it as a typed entity with :meth:`Event.entity`, or turns it straight back
+    into configuration text with ``encode_saved_entity``. Sensitive values in
+    it are masked by the event mask, so it matches the state record only where
+    both mask alike.
+    """
+
+    NONE = "none"
+    RAW = "raw"
+    PROCESSED = "processed"
 
 
 @dataclasses.dataclass

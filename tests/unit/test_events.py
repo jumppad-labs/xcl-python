@@ -225,3 +225,15 @@ def test_asyncio_config_delivers_event_entity_of_unregistered_type_as_generic_en
 
     assert len(received) == 1
     assert type(received[0].entity()) is xcl.Entity
+
+
+def test_event_data_level_imports_from_top_level():
+    from xcl import EventDataLevel
+
+    assert "EventDataLevel" in xcl.__all__
+    assert EventDataLevel is xcl.events.EventDataLevel
+
+
+def test_event_data_level_has_three_members():
+    assert [member.name for member in xcl.EventDataLevel] == ["NONE", "RAW", "PROCESSED"]
+    assert [member.value for member in xcl.EventDataLevel] == ["none", "raw", "processed"]

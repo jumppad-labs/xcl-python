@@ -50,6 +50,186 @@ def test_context_manager_closes():
     assert config.handle == 0
 
 
+def test_config_sends_event_data_none():
+    transport = FakeTransport()
+
+    xcl.Config(event_data=xcl.EventDataLevel.NONE, client=Client(transport))
+
+    _, method, raw = transport.calls[-1]
+    assert method == "CreateConfig"
+    request = core_pb2.CreateConfigRequest.FromString(raw)
+    assert request.event_data == core_pb2.EVENT_DATA_NONE
+
+
+def test_config_sends_event_data_raw():
+    transport = FakeTransport()
+
+    xcl.Config(event_data=xcl.EventDataLevel.RAW, client=Client(transport))
+
+    _, method, raw = transport.calls[-1]
+    assert method == "CreateConfig"
+    request = core_pb2.CreateConfigRequest.FromString(raw)
+    assert request.event_data == core_pb2.EVENT_DATA_RAW
+
+
+def test_config_sends_event_data_processed():
+    transport = FakeTransport()
+
+    xcl.Config(event_data=xcl.EventDataLevel.PROCESSED, client=Client(transport))
+
+    _, method, raw = transport.calls[-1]
+    assert method == "CreateConfig"
+    request = core_pb2.CreateConfigRequest.FromString(raw)
+    assert request.event_data == core_pb2.EVENT_DATA_PROCESSED
+
+
+def test_config_event_data_defaults_to_none():
+    transport = FakeTransport()
+
+    xcl.Config(client=Client(transport))
+
+    _, method, raw = transport.calls[-1]
+    assert method == "CreateConfig"
+    request = core_pb2.CreateConfigRequest.FromString(raw)
+    assert request.event_data == core_pb2.EVENT_DATA_NONE
+
+
+def test_aio_config_sends_event_data_none():
+    transport = FakeTransport()
+
+    async def run() -> None:
+        config = xcl.aio.Config(event_data=xcl.EventDataLevel.NONE, client=Client(transport))
+        await config.open()
+        await config.close()
+
+    asyncio.run(run())
+
+    create_calls = [call for call in transport.calls if call[1] == "CreateConfig"]
+    assert len(create_calls) == 1
+    request = core_pb2.CreateConfigRequest.FromString(create_calls[0][2])
+    assert request.event_data == core_pb2.EVENT_DATA_NONE
+
+
+def test_aio_config_sends_event_data_raw():
+    transport = FakeTransport()
+
+    async def run() -> None:
+        config = xcl.aio.Config(event_data=xcl.EventDataLevel.RAW, client=Client(transport))
+        await config.open()
+        await config.close()
+
+    asyncio.run(run())
+
+    create_calls = [call for call in transport.calls if call[1] == "CreateConfig"]
+    assert len(create_calls) == 1
+    request = core_pb2.CreateConfigRequest.FromString(create_calls[0][2])
+    assert request.event_data == core_pb2.EVENT_DATA_RAW
+
+
+def test_aio_config_sends_event_data_processed():
+    transport = FakeTransport()
+
+    async def run() -> None:
+        config = xcl.aio.Config(event_data=xcl.EventDataLevel.PROCESSED, client=Client(transport))
+        await config.open()
+        await config.close()
+
+    asyncio.run(run())
+
+    create_calls = [call for call in transport.calls if call[1] == "CreateConfig"]
+    assert len(create_calls) == 1
+    request = core_pb2.CreateConfigRequest.FromString(create_calls[0][2])
+    assert request.event_data == core_pb2.EVENT_DATA_PROCESSED
+
+
+def test_aio_config_event_data_defaults_to_none():
+    transport = FakeTransport()
+
+    async def run() -> None:
+        config = xcl.aio.Config(client=Client(transport))
+        await config.open()
+        await config.close()
+
+    asyncio.run(run())
+
+    create_calls = [call for call in transport.calls if call[1] == "CreateConfig"]
+    assert len(create_calls) == 1
+    request = core_pb2.CreateConfigRequest.FromString(create_calls[0][2])
+    assert request.event_data == core_pb2.EVENT_DATA_NONE
+
+
+def test_config_refuses_event_data_string_processed():
+    transport = FakeTransport()
+
+    with pytest.raises(TypeError, match=r"xcl\.EventDataLevel"):
+        xcl.Config(event_data="processed", client=Client(transport))  # type: ignore[arg-type]
+
+    assert "CreateConfig" not in transport.methods_called()
+
+
+def test_config_refuses_event_data_string_verbose():
+    transport = FakeTransport()
+
+    with pytest.raises(TypeError, match=r"xcl\.EventDataLevel"):
+        xcl.Config(event_data="verbose", client=Client(transport))  # type: ignore[arg-type]
+
+    assert "CreateConfig" not in transport.methods_called()
+
+
+def test_config_refuses_event_data_integer():
+    transport = FakeTransport()
+
+    with pytest.raises(TypeError, match=r"xcl\.EventDataLevel"):
+        xcl.Config(event_data=1, client=Client(transport))  # type: ignore[arg-type]
+
+    assert "CreateConfig" not in transport.methods_called()
+
+
+def test_config_refuses_event_data_none():
+    transport = FakeTransport()
+
+    with pytest.raises(TypeError, match=r"xcl\.EventDataLevel"):
+        xcl.Config(event_data=None, client=Client(transport))  # type: ignore[arg-type]
+
+    assert "CreateConfig" not in transport.methods_called()
+
+
+def test_aio_config_refuses_event_data_string_processed():
+    transport = FakeTransport()
+
+    with pytest.raises(TypeError, match=r"xcl\.EventDataLevel"):
+        xcl.aio.Config(event_data="processed", client=Client(transport))  # type: ignore[arg-type]
+
+    assert transport.calls == []
+
+
+def test_aio_config_refuses_event_data_string_verbose():
+    transport = FakeTransport()
+
+    with pytest.raises(TypeError, match=r"xcl\.EventDataLevel"):
+        xcl.aio.Config(event_data="verbose", client=Client(transport))  # type: ignore[arg-type]
+
+    assert transport.calls == []
+
+
+def test_aio_config_refuses_event_data_integer():
+    transport = FakeTransport()
+
+    with pytest.raises(TypeError, match=r"xcl\.EventDataLevel"):
+        xcl.aio.Config(event_data=1, client=Client(transport))  # type: ignore[arg-type]
+
+    assert transport.calls == []
+
+
+def test_aio_config_refuses_event_data_none():
+    transport = FakeTransport()
+
+    with pytest.raises(TypeError, match=r"xcl\.EventDataLevel"):
+        xcl.aio.Config(event_data=None, client=Client(transport))  # type: ignore[arg-type]
+
+    assert transport.calls == []
+
+
 @dataclass
 class App:
     image: str

@@ -14,14 +14,29 @@ from xcl._classes import ClassMap
 from xcl._poll import Handlers, Operation, StateStore, drive
 from xcl._schema import hydrate, record_bytes
 from xcl.diff import Diff
-from xcl.events import Event
+from xcl.events import Event, EventDataLevel
 from xcl.mask import Mask
 
-EVENT_DATA_LEVELS = {
-    "none": core_pb2.EVENT_DATA_NONE,
-    "raw": core_pb2.EVENT_DATA_RAW,
-    "processed": core_pb2.EVENT_DATA_PROCESSED,
+_EVENT_DATA_WIRE: dict[EventDataLevel, core_pb2.EventDataLevel] = {
+    EventDataLevel.NONE: core_pb2.EVENT_DATA_NONE,
+    EventDataLevel.RAW: core_pb2.EVENT_DATA_RAW,
+    EventDataLevel.PROCESSED: core_pb2.EVENT_DATA_PROCESSED,
 }
+
+
+def _event_data_level(value: object) -> core_pb2.EventDataLevel:
+    """Check the ``event_data`` option and return the protocol level it carries.
+
+    Only an :class:`xcl.EventDataLevel` member is accepted. The check is on
+    type, not equality: a member compares and hashes equal to its string, so
+    a lookup alone would let a bare word through.
+    """
+    if not isinstance(value, EventDataLevel):
+        raise TypeError(
+            f"event_data must be an xcl.EventDataLevel, such as xcl.EventDataLevel.PROCESSED, "
+            f"not {value!r} ({type(value).__name__})"
+        )
+    return _EVENT_DATA_WIRE[value]
 
 
 class Config:
@@ -33,7 +48,8 @@ class Config:
     in ``state_store``, an object with ``load``, ``save``, ``exists`` and
     ``clear``; ``state_mask`` masks sensitive values in it. ``variables`` are
     passed in by name. ``on_event`` receives every :class:`xcl.Event`;
-    ``event_data`` is ``"none"``, ``"raw"`` or ``"processed"``,
+    ``event_data`` is an :class:`xcl.EventDataLevel`,
+    ``EventDataLevel.NONE`` (the default), ``RAW`` or ``PROCESSED``,
     ``event_buffer_size`` bounds the events waiting for the handler, and
     ``event_mask`` masks sensitive values in event data (redacted unless
     ``no_event_mask``).
@@ -53,12 +69,13 @@ class Config:
         state_mask: Optional[Mask] = None,
         variables: Optional[Mapping[str, Any]] = None,
         on_event: Optional[Callable[[Event], Any]] = None,
-        event_data: str = "none",
+        event_data: EventDataLevel = EventDataLevel.NONE,
         event_buffer_size: int = 0,
         event_mask: Optional[Mask] = None,
         no_event_mask: bool = False,
         client: Optional[Client] = None,
     ) -> None:
+        level = _event_data_level(event_data)
         self._client = client or default_client()
         self._registries = list(registries)
         self._classes = ClassMap.from_registries(self._registries)
@@ -72,14 +89,12 @@ class Config:
 
         if state_path is not None and state_store is not None:
             raise ValueError("give state_path or state_store, not both")
-        if event_data not in EVENT_DATA_LEVELS:
-            raise ValueError(f'event_data must be "none", "raw" or "processed", not {event_data!r}')
 
         request = self._request(
             state_path=state_path,
             state_mask=state_mask,
             variables=variables,
-            event_data=event_data,
+            event_data=level,
             event_buffer_size=event_buffer_size,
             event_mask=event_mask,
             no_event_mask=no_event_mask,
@@ -92,7 +107,7 @@ class Config:
         state_path: Optional[str | os.PathLike[str]] = None,
         state_mask: Optional[Mask] = None,
         variables: Optional[Mapping[str, Any]] = None,
-        event_data: str = "none",
+        event_data: core_pb2.EventDataLevel = core_pb2.EVENT_DATA_NONE,
         event_buffer_size: int = 0,
         event_mask: Optional[Mask] = None,
         no_event_mask: bool = False,
@@ -101,7 +116,7 @@ class Config:
             registries=[r._to_proto() for r in self._registries],
             events=self._on_event is not None,
             event_buffer_size=int(event_buffer_size),
-            event_data=EVENT_DATA_LEVELS[event_data],
+            event_data=event_data,
             no_event_mask=bool(no_event_mask),
         )
         if state_path is not None:

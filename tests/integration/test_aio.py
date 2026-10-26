@@ -280,7 +280,7 @@ def test_async_event_entity_is_configs_class(tmp_path):
             entities.append(event.entity())
 
     async def main() -> None:
-        async with xcl.aio.Config(registries=[app_registry()], on_event=on_event, event_data="processed") as c:
+        async with xcl.aio.Config(registries=[app_registry()], on_event=on_event, event_data=xcl.EventDataLevel.PROCESSED) as c:
             await c.apply(config)
 
     asyncio.run(main())
@@ -628,7 +628,7 @@ def test_async_encode_entity_from_kept_event_entity(tmp_path):
             kept.append(event.entity())
 
     async def main() -> list[str]:
-        async with xcl.aio.Config(registries=[app_registry()], on_event=on_event, event_data="processed") as c:
+        async with xcl.aio.Config(registries=[app_registry()], on_event=on_event, event_data=xcl.EventDataLevel.PROCESSED) as c:
             await c.apply(config)
             return [await c.encode_entity(entity) for entity in kept]
 
