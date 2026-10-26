@@ -861,6 +861,138 @@ def test_async_encode_entity_during_operation_refused(tmp_path, slow_plugin):
     assert isinstance(raised[0], xcl.OperationInProgressError)
 
 
+# -- rendering from an event handler during an apply -----------------------
+
+
+class GatedStore(AsyncMemoryStore):
+    """An async state store whose save of the created resource waits until the handler has finished with it.
+
+    The asyncio client handles events and state tasks concurrently, so the
+    gate makes the engine still be waiting on the apply's save while the
+    handler renders, rather than leaving that to timing.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.handled = asyncio.Event()
+
+    async def save(self, entities: list[bytes]) -> None:
+        if any(json.loads(raw).get("done") for raw in entities):
+            await asyncio.wait_for(self.handled.wait(), timeout=10)
+        await super().save(entities)
+
+
+def test_async_encode_saved_entity_from_handler_during_apply(tmp_path, slow_plugin):
+    config = slow_config(tmp_path, 0)
+    store = GatedStore()
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    records: list[bytes] = []
+    after: list[str] = []
+    configs: list[xcl.aio.Config] = []
+
+    async def on_event(event: xcl.Event) -> None:
+        if event.operation != "create" or event.phase != "success":
+            return
+        try:
+            texts.append(await configs[0].encode_saved_entity(event.data, include_computed=True))
+            records.append(event.data)
+        except BaseException as err:
+            raised.append(err)
+        finally:
+            store.handled.set()
+
+    async def main() -> None:
+        async with xcl.aio.Config(
+            registries=[plugin_registry(slow_plugin)],
+            on_event=on_event,
+            event_data=xcl.EventDataLevel.PROCESSED,
+            state_store=store,
+        ) as c:
+            configs.append(c)
+            await c.apply(config)
+            after.append(await c.encode_saved_entity(records[0], include_computed=True))
+
+    asyncio.run(main())
+
+    assert raised == []
+    assert len(texts) == 1
+    assert 'resource "slow" "one"' in texts[0]
+    assert "done = true" in texts[0]
+    assert texts == after
+    assert "save" in store.calls
+
+
+def test_async_encode_entity_from_handler_during_apply_refused(tmp_path, slow_plugin):
+    config = slow_config(tmp_path, 0)
+    store = GatedStore()
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    configs: list[xcl.aio.Config] = []
+
+    async def on_event(event: xcl.Event) -> None:
+        if event.operation != "create" or event.phase != "success":
+            return
+        try:
+            texts.append(await configs[0].encode_entity(event.entity()))
+        except xcl.Error as err:
+            raised.append(err)
+        finally:
+            store.handled.set()
+
+    async def main() -> None:
+        async with xcl.aio.Config(
+            registries=[plugin_registry(slow_plugin)],
+            on_event=on_event,
+            event_data=xcl.EventDataLevel.PROCESSED,
+            state_store=store,
+        ) as c:
+            configs.append(c)
+            await c.apply(config)
+
+    asyncio.run(main())
+
+    assert texts == []
+    assert len(raised) == 1
+    assert isinstance(raised[0], xcl.OperationInProgressError)
+    assert "save" in store.calls
+
+
+def test_async_encode_edited_entity_from_handler_during_apply_refused(tmp_path, slow_plugin):
+    config = slow_config(tmp_path, 0)
+    store = GatedStore()
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    configs: list[xcl.aio.Config] = []
+
+    async def on_event(event: xcl.Event) -> None:
+        if event.operation != "create" or event.phase != "success":
+            return
+        edited = xcl.Entity({**event.entity().to_dict(), "delay_ms": 5})
+        try:
+            texts.append(await configs[0].encode_entity(edited))
+        except xcl.Error as err:
+            raised.append(err)
+        finally:
+            store.handled.set()
+
+    async def main() -> None:
+        async with xcl.aio.Config(
+            registries=[plugin_registry(slow_plugin)],
+            on_event=on_event,
+            event_data=xcl.EventDataLevel.PROCESSED,
+            state_store=store,
+        ) as c:
+            configs.append(c)
+            await c.apply(config)
+
+    asyncio.run(main())
+
+    assert texts == []
+    assert len(raised) == 1
+    assert isinstance(raised[0], xcl.OperationInProgressError)
+
+
 # -- lookups and operations are awaitables -------------------------------
 
 

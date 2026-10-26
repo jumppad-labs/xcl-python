@@ -293,6 +293,31 @@ options:
 choice. `cfg.encode_saved_entity(record)` renders a saved record, as a state
 store holds it and events carry it, and takes the same keywords.
 
+`cfg.encode_saved_entity` works at any time, including from an `on_event`
+handler while an operation runs, because it reads none of the configuration's
+entities. With `event_data=xcl.EventDataLevel.PROCESSED`, each create success
+event carries the resource's saved record, so a program can print each
+created resource beneath its success event as the apply goes, with no
+waiting for the apply to finish:
+
+```python
+def on_event(e):
+    print(e.operation, e.phase, e.resource_id)
+    if e.operation == "create" and e.phase == "success":
+        print(cfg.encode_saved_entity(e.data, include_computed=True))
+
+cfg = xcl.Config(
+    registries=[local],
+    on_event=on_event,
+    event_data=xcl.EventDataLevel.PROCESSED,
+)
+cfg.apply("./config")
+```
+
+The text is the same as the same call gives after the apply. Variables and
+outputs have create success events too; their records are not configuration
+and raise `xcl.NotEncodableError`.
+
 A looked-up entity is encoded from the data the engine returned for it, so
 only the fields you change differ from Go's text: a default the dataclass
 filled in, such as `Health.interval`, is not written unless you set it. A
@@ -302,9 +327,12 @@ encoded from its values like a hand-built one, defaults included.
 Encoding a value that is not an entity, a variable, output or module, or a
 value with no configuration form raises `xcl.NotEncodableError`; an instance
 of a class this configuration did not register raises
-`xcl.NotRegisteredError`; and encoding while an operation runs raises
-`xcl.OperationInProgressError`. With `xcl.aio.Config` the call is
-`await cfg.encode_entity(entity)`.
+`xcl.NotRegisteredError`; and `cfg.encode_entity` while an operation runs,
+including from an event handler, raises `xcl.OperationInProgressError`,
+because it reads the engine's own copy of the entity, which the operation is
+still changing. From a handler, render `event.data` with
+`cfg.encode_saved_entity` instead. With `xcl.aio.Config` the calls are
+`await cfg.encode_entity(entity)` and `await cfg.encode_saved_entity(record)`.
 
 ## Asyncio
 

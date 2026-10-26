@@ -264,7 +264,7 @@ class Config:
         show_references: bool = False,
         highlight: bool = False,
     ) -> str:
-        """An entity rendered as configuration text; see :meth:`xcl.Config.encode_entity`."""
+        """An entity rendered as configuration text, refused while an operation runs; see :meth:`xcl.Config.encode_entity`."""
         # the record is built first, so a value that is not an entity fails
         # before anything reaches the engine
         request = core_pb2.EncodeEntityRequest(
@@ -285,7 +285,7 @@ class Config:
         show_references: bool = False,
         highlight: bool = False,
     ) -> str:
-        """A saved record rendered as configuration text; see :meth:`xcl.Config.encode_saved_entity`."""
+        """A saved record rendered as configuration text, allowed during an operation, including from an event handler; see :meth:`xcl.Config.encode_saved_entity`."""
         request = core_pb2.EncodeSavedEntityRequest(
             entity=bytes(data),
             highlight=highlight,

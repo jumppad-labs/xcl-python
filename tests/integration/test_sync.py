@@ -1552,6 +1552,225 @@ def test_encode_entity_during_operation_refused(tmp_path, slow_plugin):
     assert isinstance(raised[0], xcl.OperationInProgressError)
 
 
+# -- rendering from an event handler during an apply -----------------------
+#
+# Each of these applies one slow resource with a Python state store. The
+# engine asks the store to save after the create success event, and the
+# synchronous driver answers that only after the handler returns, so every
+# render in a handler runs while the engine is still waiting on the apply.
+
+SLOW_ONE = """
+resource "slow" "one" {
+  delay_ms = 0
+}
+"""
+
+BOGUS_RECORD = b'{"meta":{"id":"bogus.x","name":"x","type":"bogus"},"image":"nginx"}'
+
+
+def is_create_success(event: xcl.Event) -> bool:
+    return event.operation == "create" and event.phase == "success"
+
+
+def test_encode_saved_entity_from_handler_during_apply(tmp_path, slow_plugin):
+    config = write_config(tmp_path, SLOW_ONE)
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    records: list[bytes] = []
+    configs: list[xcl.Config] = []
+
+    def on_event(event: xcl.Event) -> None:
+        if not is_create_success(event):
+            return
+        try:
+            texts.append(configs[0].encode_saved_entity(event.data, include_computed=True))
+            records.append(event.data)
+        except BaseException as err:
+            raised.append(err)
+
+    with xcl.Config(
+        registries=[plugin_registry(slow_plugin)],
+        on_event=on_event,
+        event_data=xcl.EventDataLevel.PROCESSED,
+        state_store=MemoryStore(),
+    ) as c:
+        configs.append(c)
+        c.apply(config)
+        after = c.encode_saved_entity(records[0], include_computed=True)
+
+    assert raised == []
+    assert len(texts) == 1
+    assert 'resource "slow" "one"' in texts[0]
+    assert "done = true" in texts[0]
+    assert texts[0] == after
+
+
+def apply_rendering(directory: Path, slow_plugin: Path, render: bool) -> tuple[list[tuple[str, str]], list[dict]]:
+    """Apply SLOW_ONE in ``directory``, rendering every create success record when ``render`` is set.
+
+    Returns each event's operation and phase in order, and the records the
+    store saved, decoded.
+    """
+    config = write_config(directory, SLOW_ONE)
+    store = MemoryStore()
+    events: list[tuple[str, str]] = []
+    raised: list[BaseException] = []
+    configs: list[xcl.Config] = []
+
+    def on_event(event: xcl.Event) -> None:
+        if render and is_create_success(event):
+            try:
+                configs[0].encode_saved_entity(event.data, include_computed=True)
+            except BaseException as err:
+                raised.append(err)
+        events.append((event.operation, event.phase))
+
+    with xcl.Config(
+        registries=[plugin_registry(slow_plugin)],
+        on_event=on_event,
+        event_data=xcl.EventDataLevel.PROCESSED,
+        state_store=store,
+    ) as c:
+        configs.append(c)
+        c.apply(config)
+
+    assert raised == []
+    saved = sorted((json.loads(raw) for raw in store.saved), key=lambda record: record["meta"]["id"])
+    for record in saved:
+        record["meta"].pop("file", None)
+    return events, saved
+
+
+def test_apply_unchanged_by_rendering_in_handler(tmp_path, slow_plugin):
+    (tmp_path / "rendering").mkdir()
+    (tmp_path / "silent").mkdir()
+
+    rendering_events, rendering_saved = apply_rendering(tmp_path / "rendering", slow_plugin, render=True)
+    silent_events, silent_saved = apply_rendering(tmp_path / "silent", slow_plugin, render=False)
+
+    assert ("create", "success") in rendering_events
+    assert rendering_events == silent_events
+    assert rendering_saved == silent_saved
+
+
+def test_encode_entity_from_handler_during_apply_refused(tmp_path, slow_plugin):
+    config = write_config(tmp_path, SLOW_ONE)
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    configs: list[xcl.Config] = []
+
+    def on_event(event: xcl.Event) -> None:
+        if not is_create_success(event):
+            return
+        try:
+            texts.append(configs[0].encode_entity(event.entity()))
+        except xcl.Error as err:
+            raised.append(err)
+
+    with xcl.Config(
+        registries=[plugin_registry(slow_plugin)],
+        on_event=on_event,
+        event_data=xcl.EventDataLevel.PROCESSED,
+        state_store=MemoryStore(),
+    ) as c:
+        configs.append(c)
+        c.apply(config)
+        found = c.find(None, "resource.slow.one")
+
+    assert texts == []
+    assert len(raised) == 1
+    assert isinstance(raised[0], xcl.OperationInProgressError)
+    assert found is not None
+
+
+def test_encode_edited_entity_from_handler_during_apply_refused(tmp_path, slow_plugin):
+    config = write_config(tmp_path, SLOW_ONE)
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    configs: list[xcl.Config] = []
+
+    def on_event(event: xcl.Event) -> None:
+        if not is_create_success(event):
+            return
+        edited = xcl.Entity({**event.entity().to_dict(), "delay_ms": 5})
+        try:
+            texts.append(configs[0].encode_entity(edited))
+        except xcl.Error as err:
+            raised.append(err)
+
+    with xcl.Config(
+        registries=[plugin_registry(slow_plugin)],
+        on_event=on_event,
+        event_data=xcl.EventDataLevel.PROCESSED,
+        state_store=MemoryStore(),
+    ) as c:
+        configs.append(c)
+        c.apply(config)
+
+    assert texts == []
+    assert len(raised) == 1
+    assert isinstance(raised[0], xcl.OperationInProgressError)
+
+
+def test_encode_saved_invalid_record_from_handler_during_apply(tmp_path, slow_plugin):
+    config = write_config(tmp_path, SLOW_ONE)
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    configs: list[xcl.Config] = []
+
+    def on_event(event: xcl.Event) -> None:
+        if not is_create_success(event):
+            return
+        try:
+            texts.append(configs[0].encode_saved_entity(b"not json"))
+        except xcl.Error as err:
+            raised.append(err)
+
+    with xcl.Config(
+        registries=[plugin_registry(slow_plugin)],
+        on_event=on_event,
+        event_data=xcl.EventDataLevel.PROCESSED,
+        state_store=MemoryStore(),
+    ) as c:
+        configs.append(c)
+        c.apply(config)
+
+    assert texts == []
+    assert len(raised) == 1
+    assert isinstance(raised[0], xcl.InvalidSavedDataError)
+
+
+def test_encode_saved_unregistered_record_from_handler_during_apply(tmp_path, slow_plugin):
+    config = write_config(tmp_path, SLOW_ONE)
+    raised: list[BaseException] = []
+    texts: list[str] = []
+    configs: list[xcl.Config] = []
+
+    def on_event(event: xcl.Event) -> None:
+        if not is_create_success(event):
+            return
+        try:
+            texts.append(configs[0].encode_saved_entity(BOGUS_RECORD))
+        except xcl.Error as err:
+            raised.append(err)
+
+    with xcl.Config(
+        registries=[plugin_registry(slow_plugin)],
+        on_event=on_event,
+        event_data=xcl.EventDataLevel.PROCESSED,
+        state_store=MemoryStore(),
+    ) as c:
+        configs.append(c)
+        c.apply(config)
+        with pytest.raises(xcl.Error) as after:
+            c.encode_saved_entity(BOGUS_RECORD)
+
+    assert texts == []
+    assert len(raised) == 1
+    assert isinstance(raised[0], xcl.UnregisteredTypeError)
+    assert type(raised[0]) is type(after.value)
+
+
 # -- threads and interruption ----------------------------------------------
 
 

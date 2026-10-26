@@ -261,7 +261,10 @@ class Config:
         entity, a variable, output or module, or a value with no
         configuration form, :class:`xcl.NotRegisteredError` for an instance
         of a class this configuration did not register, and
-        :class:`xcl.OperationInProgressError` while an operation runs.
+        :class:`xcl.OperationInProgressError` while an operation runs,
+        including from an ``on_event`` handler, because it reads the
+        engine's own copy of the entity. To render from an event handler,
+        use ``encode_saved_entity(event.data)``, which is allowed then.
         """
         request = core_pb2.EncodeEntityRequest(
             entity=record_bytes(entity, self._classes),
@@ -291,6 +294,19 @@ class Config:
         for real rather than ``(sensitive)``, and ``show_references`` each
         field that referred to another entity as the configuration wrote
         it. ``highlight`` colours the text for a terminal.
+
+        It can be called at any time, including from an ``on_event`` handler
+        while an operation runs, because it reads none of the
+        configuration's entities. A program created with
+        ``event_data=xcl.EventDataLevel.PROCESSED`` can therefore print each
+        created resource as its create success event arrives, and the text
+        is the same as the same render after the operation.
+
+        Raises :class:`xcl.InvalidSavedDataError` for data that is not one
+        saved record, :class:`xcl.UnregisteredTypeError` for a record of a
+        type this configuration does not know, :class:`xcl.NotEncodableError`
+        for a variable, output or module, and :class:`xcl.PluginLoadError`
+        when a plugin the record needs fails to load.
         """
         request = core_pb2.EncodeSavedEntityRequest(
             entity=bytes(data),
