@@ -13,10 +13,13 @@ process, and destroy. It also covers what a person is shown, through the
 package's own printing and logging: the report ``xcl.format_error`` gives for
 a failed validate and apply, the text ``print_entity`` prints for every entity
 with computed values, the change summary ``xcl.print_diff`` prints for the
-diff before the apply and for the changed configuration, and the level,
-message, resource and operation of every event ``xcl.logging_handler`` writes
-up to the load. Temporary paths are replaced by ``<tmp>`` and the fixture
-directory by ``<fixture>``.
+diff before the apply and for the changed configuration, the level, message,
+resource and operation of every event ``xcl.logging_handler`` writes up to the
+load, and, for a fixture whose apply succeeds, what ``xcl.prettylog`` writes
+for a fresh apply at info, as sorted groups of an event line and the
+configuration beneath it. Temporary paths are replaced by ``<tmp>`` and the
+fixture directory by ``<fixture>``, and the pretty log's times and durations
+by ``<time>`` and ``<duration>``.
 
 With ``--load``, which the program runs itself with for the load stage, it
 loads the state in ``--state`` with the fixture's types and prints the
@@ -45,6 +48,7 @@ import argparse  # noqa: E402
 import io  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
+import re  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
 import tempfile  # noqa: E402
@@ -101,13 +105,14 @@ def new_config(
     state_dir: str,
     tmp: str,
     on_event: Optional[Callable[[xcl.Event], None]] = None,
+    **extra: Any,
 ) -> xcl.Config:
     """The Config a fixture runs with, exactly as the Go program builds it.
 
     Its types and ``slugify`` on a local registry, the recording plugin when
     a plugins directory is given, state in ``state_dir``, the fixture's
-    variables with ``<tmp>`` expanded to ``tmp``, and ``on_event``, when
-    given, receiving its events.
+    variables with ``<tmp>`` expanded to ``tmp``, ``on_event``, when given,
+    receiving its events, and any extra options of ``xcl.Config``.
     """
     local = xcl.LocalRegistry()
 
@@ -128,7 +133,7 @@ def new_config(
             value = value.replace("<tmp>", tmp)
         variables[key] = value
 
-    return xcl.Config(registries=[local], state_path=state_dir, variables=variables, on_event=on_event)
+    return xcl.Config(registries=[local], state_path=state_dir, variables=variables, on_event=on_event, **extra)
 
 
 def attempt(operation: Callable[..., Any], *args: Any) -> tuple[Any, Optional[xcl.Error]]:
@@ -189,6 +194,12 @@ def run(fixture_dir: str, plugins: str) -> dict[str, Any]:
 
         record["log"] = n.log(logs.entries)
 
+        # Go's example writes no report beneath an error and no guidance, so
+        # only a fixture whose apply succeeds is compared
+        record["pretty_log"] = None
+        if apply_err is None:
+            record["pretty_log"] = pretty_log(fixture, plugins, tmp, n)
+
         if apply_err is None:
             loaded = load_in_new_process(fixture.dir, plugins, state_dir, tmp)
             record["load"] = n.value(loaded)
@@ -203,6 +214,31 @@ def run(fixture_dir: str, plugins: str) -> dict[str, Any]:
         return record
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def pretty_log(fixture: Fixture, plugins: str, tmp: str, n: Normaliser) -> Any:
+    """What ``xcl.prettylog`` writes for a fresh apply at info, as the Go program's prettyLog records Go's example.
+
+    The fixture is applied again, in a state directory of its own, with
+    processed event data, into a buffer; the groups are normalised and
+    sorted by :meth:`Normaliser.pretty_groups`.
+    """
+    out = io.StringIO()
+    config = new_config(
+        fixture,
+        plugins,
+        os.path.join(tmp, "pretty-state"),
+        tmp,
+        xcl.prettylog.handler(out, logging.INFO),
+        event_data=xcl.EventDataLevel.PROCESSED,
+    )
+    try:
+        _, err = attempt(config.apply, fixture.main)
+    finally:
+        config.close()
+    if err is not None:
+        return n.outcome(err)
+    return n.pretty_groups(out.getvalue())
 
 
 # ENCODE_CHOICES are the four encode choices, by the name the record gives
@@ -525,6 +561,34 @@ class Normaliser:
         """Replace the fixture and temporary directories in a path, written with forward slashes."""
         return self.text(path.replace(os.sep, "/"))
 
+    def pretty_groups(self, text: str) -> list[str]:
+        """Pretty logger output as sorted groups, as the Go program's prettyGroups gives them.
+
+        A line that does not start with a space starts a group and the lines
+        beneath it join it. Colour codes are removed, each group's leading
+        time is replaced by ``<time>`` and every duration by ``<duration>``,
+        and run paths are replaced; sorting keeps resources created
+        concurrently from reordering the groups.
+        """
+        text = _ANSI_CODE.sub("", text)
+        groups: list[str] = []
+        current: Optional[list[str]] = None
+        for line in text.rstrip("\n").split("\n"):
+            if line == "":
+                continue
+            if not line.startswith(" "):
+                if current is not None:
+                    groups.append(self.text("\n".join(current)))
+                line = _KITCHEN_TIME.sub("<time> ", line)
+                line = _DURATION_VALUE.sub("duration=<duration>", line)
+                current = [line]
+                continue
+            if current is not None:
+                current.append(line)
+        if current is not None:
+            groups.append(self.text("\n".join(current)))
+        return sorted(groups)
+
     def text(self, text: str) -> str:
         """Replace the fixture and temporary directories wherever they appear."""
         for directory in _dir_forms(self.fixture):
@@ -532,6 +596,13 @@ class Normaliser:
         for directory in _dir_forms(self.tmp):
             text = text.replace(directory, "<tmp>")
         return text
+
+
+# what the pretty log's normalisation replaces, as the Go program's
+# ansiCode, kitchenTime and durationValue match it
+_ANSI_CODE = re.compile(r"\x1b\[[0-9;]*m")
+_KITCHEN_TIME = re.compile(r"^\d{1,2}:\d{2}(AM|PM) ")
+_DURATION_VALUE = re.compile(r"duration=\S+")
 
 
 def _dir_forms(directory: str) -> tuple[str, str, str]:

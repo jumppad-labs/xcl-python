@@ -55,7 +55,7 @@ from xcl._logbridge import logging_handler
 from xcl._poll import StateStore
 from xcl._print import format_error, print_diff, print_error
 from xcl._version import __version__
-from xcl import highlight, mask
+from xcl import highlight, mask, prettylog
 from xcl.config import Config
 from xcl.diff import Change, Diff, ResourceDiff, Summary
 from xcl.events import Event, EventDataLevel
@@ -75,6 +75,7 @@ __all__ = [
     "Summary",
     "mask",
     "highlight",
+    "prettylog",
     "Entity",
     "Meta",
     "Sensitive",

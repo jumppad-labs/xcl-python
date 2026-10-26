@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import threading
 from dataclasses import dataclass
 
 import pytest
@@ -1069,3 +1070,124 @@ def test_diff_tokens_take_no_part_in_equality():
     diff = config.diff("main.xcl")
 
     assert diff == xcl.Diff(summary=diff.summary, resources=diff.resources)
+
+
+# -- the private blocking render a handler uses --------------------------------
+
+
+def test_saved_entity_tokens_now_asks_for_tokens():
+    transport = tokens_transport()
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    tokens = config._saved_entity_tokens_now(SAVED_RECORD, include_computed=True)
+
+    request = sent_encode_saved_entity_request(transport)
+    assert request.tokens is True
+    assert request.entity == SAVED_RECORD
+    assert request.options.include_computed is True
+    assert request.options.include_empty is False
+    assert request.options.reveal_sensitive is False
+    assert request.options.show_references is False
+    assert tokens[2] == Token(kind=Kind.NAME_LABEL, text='"web"')
+
+
+def test_saved_entity_tokens_now_runs_on_calling_thread():
+    transport = ThreadRecordingTransport(tokens_transport().script)
+    config = xcl.Config(registries=[app_registry()], client=Client(transport))
+
+    config._saved_entity_tokens_now(SAVED_RECORD)
+
+    assert transport.encode_threads == [threading.get_ident()]
+
+
+class ThreadRecordingTransport(FakeTransport):
+    """A fake transport that records the thread each EncodeSavedEntity call is made on."""
+
+    def __init__(self, script) -> None:
+        super().__init__(script)
+        self.encode_threads: list[int] = []
+
+    def call(self, handle, method, request):
+        if method == "EncodeSavedEntity":
+            self.encode_threads.append(threading.get_ident())
+        return super().call(handle, method, request)
+
+
+def test_aio_saved_entity_tokens_now_asks_for_tokens():
+    transport = tokens_transport()
+    tokens: list[Token] = []
+
+    async def run() -> None:
+        config = xcl.aio.Config(registries=[app_registry()], client=Client(transport))
+        try:
+            await config.open()
+            tokens.extend(config._saved_entity_tokens_now(SAVED_RECORD, include_computed=True))
+        finally:
+            await config.close()
+
+    asyncio.run(run())
+
+    encode_calls = [call for call in transport.calls if call[1] == "EncodeSavedEntity"]
+    assert len(encode_calls) == 1
+    handle, _, body = encode_calls[0]
+    request = core_pb2.EncodeSavedEntityRequest.FromString(body)
+    assert handle == 7
+    assert request.tokens is True
+    assert request.entity == SAVED_RECORD
+    assert request.options.include_computed is True
+    assert tokens[2] == Token(kind=Kind.NAME_LABEL, text='"web"')
+
+
+def test_aio_saved_entity_tokens_now_calls_on_calling_thread():
+    transport = ThreadRecordingTransport(tokens_transport().script)
+    caller_threads: list[int] = []
+
+    async def run() -> None:
+        config = xcl.aio.Config(registries=[app_registry()], client=Client(transport))
+        try:
+            await config.open()
+
+            def render() -> None:
+                caller_threads.append(threading.get_ident())
+                config._saved_entity_tokens_now(SAVED_RECORD)
+
+            # a plain on_event handler runs on the default executor, so the
+            # render is made from one of its threads
+            await asyncio.get_running_loop().run_in_executor(None, render)
+        finally:
+            await config.close()
+
+    asyncio.run(run())
+
+    assert transport.encode_threads == caller_threads
+
+
+def test_aio_saved_entity_tokens_now_refuses_before_open():
+    config = xcl.aio.Config(registries=[app_registry()], client=Client(tokens_transport()))
+
+    with pytest.raises(RuntimeError, match="not open"):
+        config._saved_entity_tokens_now(SAVED_RECORD)
+
+
+def test_config_remembers_event_data_level():
+    config = xcl.Config(event_data=xcl.EventDataLevel.PROCESSED, client=Client(FakeTransport()))
+
+    assert config._event_data is xcl.EventDataLevel.PROCESSED
+
+
+def test_config_remembers_default_event_data_level():
+    config = xcl.Config(client=Client(FakeTransport()))
+
+    assert config._event_data is xcl.EventDataLevel.NONE
+
+
+def test_aio_config_remembers_event_data_level():
+    config = xcl.aio.Config(event_data=xcl.EventDataLevel.RAW, client=Client(FakeTransport()))
+
+    assert config._event_data is xcl.EventDataLevel.RAW
+
+
+def test_aio_config_remembers_default_event_data_level():
+    config = xcl.aio.Config(client=Client(FakeTransport()))
+
+    assert config._event_data is xcl.EventDataLevel.NONE

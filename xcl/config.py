@@ -80,6 +80,9 @@ class Config:
         client: Optional[Client] = None,
     ) -> None:
         level = _event_data_level(event_data)
+        # the level the configuration was created with, which tells a
+        # handler whether an event without data is expected to have none
+        self._event_data = event_data
         self._client = client or default_client()
         self._registries = list(registries)
         self._classes = ClassMap.from_registries(self._registries)
@@ -88,7 +91,9 @@ class Config:
         self._functions: dict[str, Callable[..., Any]] = {}
         for r in self._registries:
             self._functions.update(getattr(r, "functions", {}) or {})
-        self._handlers = Handlers(functions=self._functions, store=state_store, on_event=on_event, classes=self._classes)
+        self._handlers = Handlers(
+            functions=self._functions, store=state_store, on_event=on_event, classes=self._classes, config=self
+        )
         self._handle: Optional[int] = None
 
         if state_path is not None and state_store is not None:
@@ -393,13 +398,36 @@ class Config:
         :meth:`encode_saved_entity`, it can be called from an ``on_event``
         handler while an operation runs, and raises what it raises.
         """
-        request = _encode_saved_entity_request(
+        return self._saved_entity_tokens_now(
+            data,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+
+    def _saved_entity_tokens_now(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of a saved record, asked of the engine with a blocking call on the calling thread.
+
+        Private: it is the render :mod:`xcl.prettylog` makes from an
+        ``on_event`` handler while an operation runs, which the engine
+        allows for a saved record. Both configuration flavours have it, so
+        a handler can use it whichever delivered the event.
+        """
+        return _saved_entity_tokens(
+            self._client,
+            self._open(),
             data,
             _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
-            tokens=True,
         )
-        response = self._client.call(self._open(), "EncodeSavedEntity", request)
-        return _tokens_from_proto(response.tokens)
 
     def print_saved_entity(
         self,
@@ -469,6 +497,13 @@ def _encode_entity_request(record: bytes, options: core_pb2.EncodeOptions, *, to
 def _encode_saved_entity_request(data: bytes, options: core_pb2.EncodeOptions, *, tokens: bool) -> core_pb2.EncodeSavedEntityRequest:
     """The request rendering a saved record, asking for its labelled text too when ``tokens`` is true."""
     return core_pb2.EncodeSavedEntityRequest(entity=bytes(data), options=options, tokens=tokens)
+
+
+def _saved_entity_tokens(client: Client, handle: int, data: bytes, options: core_pb2.EncodeOptions) -> list[Token]:
+    """The labelled text of a saved record, from a blocking ``EncodeSavedEntity`` call straight through ``client``."""
+    request = _encode_saved_entity_request(data, options, tokens=True)
+    response = client.call(handle, "EncodeSavedEntity", request)
+    return _tokens_from_proto(response.tokens)
 
 
 def _paths(paths: Iterable[str | os.PathLike[str]]) -> list[str]:

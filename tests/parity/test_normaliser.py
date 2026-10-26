@@ -27,3 +27,27 @@ def test_normaliser_replaces_tmp_as_written():
     text = n.text("C:\\Temp\\xcl-parity-1\\state")
 
     assert text == "<tmp>\\state"
+
+
+def test_pretty_groups_join_indented_lines_to_their_event_line():
+    n = Normaliser(tmp="/tmp/run", fixture="/work/fixture")
+
+    groups = n.pretty_groups("3:04PM INFO b second\n  block line\n12:00AM INFO a first duration=1.5ms\n")
+
+    assert groups == ["<time> INFO a first duration=<duration>", "<time> INFO b second\n  block line"]
+
+
+def test_pretty_groups_strip_colour():
+    n = Normaliser(tmp="/tmp/run", fixture="/work/fixture")
+
+    groups = n.pretty_groups("3:04PM \x1b[1;36mINFO\x1b[0m apply start \x1b[2msource\x1b[0m=core\n")
+
+    assert groups == ["<time> INFO apply start source=core"]
+
+
+def test_pretty_groups_replace_run_paths():
+    n = Normaliser(tmp="/tmp/run", fixture="/work/fixture")
+
+    groups = n.pretty_groups('3:04PM INFO create success file=/work/fixture/main.xcl\n  log = "/tmp/run/recording.log"\n')
+
+    assert groups == ['<time> INFO create success file=<fixture>/main.xcl\n  log = "<tmp>/recording.log"']

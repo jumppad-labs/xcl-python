@@ -237,3 +237,66 @@ def test_event_data_level_imports_from_top_level():
 def test_event_data_level_has_three_members():
     assert [member.name for member in xcl.EventDataLevel] == ["NONE", "RAW", "PROCESSED"]
     assert [member.value for member in xcl.EventDataLevel] == ["none", "raw", "processed"]
+
+
+# -- the configuration that delivered an event --------------------------------
+
+
+def test_sync_config_attaches_itself_to_events():
+    received: list[Event] = []
+    config = xcl.Config(registries=[app_registry()], on_event=received.append, client=Client(apply_transport(APP_JSON)))
+
+    config.apply("main.hcl")
+
+    assert len(received) == 1
+    assert received[0]._config is config
+
+
+def test_asyncio_config_attaches_itself_to_events():
+    received: list[Event] = []
+    configs: list[xcl.aio.Config] = []
+
+    async def run() -> None:
+        config = xcl.aio.Config(registries=[app_registry()], on_event=received.append, client=Client(apply_transport(APP_JSON)))
+        configs.append(config)
+        try:
+            await config.apply("main.hcl")
+        finally:
+            await config.close()
+
+    asyncio.run(run())
+
+    assert len(received) == 1
+    assert received[0]._config is configs[0]
+
+
+def test_event_built_by_hand_has_no_config():
+    event = Event(time=datetime(2026, 1, 1, tzinfo=timezone.utc), source="core", operation="apply", phase="start")
+
+    assert event._config is None
+
+
+def test_event_from_proto_without_config_has_none():
+    event = Event._from_proto(event_proto(APP_JSON), app_classes())
+
+    assert event._config is None
+
+
+def test_events_delivered_by_different_configs_are_equal():
+    first = Event._from_proto(event_proto(APP_JSON), app_classes(), object())
+    second = Event._from_proto(event_proto(APP_JSON), app_classes(), object())
+
+    assert first._config is not second._config
+    assert first == second
+
+
+def test_event_repr_does_not_show_config():
+    first = Event._from_proto(event_proto(APP_JSON), app_classes(), object())
+    second = Event._from_proto(event_proto(APP_JSON), app_classes(), None)
+
+    assert repr(first) == repr(second)
+    assert "_config" not in repr(first)
+
+
+def test_event_config_is_not_a_field():
+    assert "_config" not in [field.name for field in dataclasses.fields(Event)]
