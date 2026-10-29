@@ -24,6 +24,7 @@ import xcl
 class Settings:
     image: str
     replicas: int = 1
+    meta: xcl.Meta | None = None
 
 
 def main() -> None:

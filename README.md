@@ -59,6 +59,7 @@ RELEASE_KEY = open("jumppad-labs-releases.asc").read()
 class Settings:
     image: str
     replicas: int = 1
+    meta: xcl.Meta | None = None
 
 
 github = xcl.GitHubRegistry(trusted_keys=[RELEASE_KEY])
