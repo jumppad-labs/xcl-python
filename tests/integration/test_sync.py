@@ -1650,14 +1650,21 @@ def test_encode_entity_during_operation_refused(tmp_path, slow_plugin):
 
 # -- rendering from an event handler during an apply -----------------------
 #
-# Each of these applies one slow resource with a Python state store. The
-# engine asks the store to save after the create success event, and the
-# synchronous driver answers that only after the handler returns, so every
-# render in a handler runs while the engine is still waiting on the apply.
+# Each of these applies two slow resources with a Python state store, and
+# renders in the handler of the first one's create success event. The engine
+# can ask the store to save that resource before the driver has handed the
+# event to the handler, so the save cannot be relied on to keep the apply
+# running; the second resource, which depends on the first and takes a
+# second to create, does.
 
-SLOW_ONE = """
+SLOW_PAIR = """
 resource "slow" "one" {
   delay_ms = 0
+}
+
+resource "slow" "two" {
+  delay_ms   = 1000
+  depends_on = ["resource.slow.one"]
 }
 """
 
@@ -1665,11 +1672,12 @@ BOGUS_RECORD = b'{"meta":{"id":"bogus.x","name":"x","type":"bogus"},"image":"ngi
 
 
 def is_create_success(event: xcl.Event) -> bool:
-    return event.operation == "create" and event.phase == "success"
+    """Whether ``event`` is the first resource's create success, which arrives while the second is being created."""
+    return event.resource_id == "resource.slow.one" and event.operation == "create" and event.phase == "success"
 
 
 def test_encode_saved_entity_from_handler_during_apply(tmp_path, slow_plugin):
-    config = write_config(tmp_path, SLOW_ONE)
+    config = write_config(tmp_path, SLOW_PAIR)
     raised: list[BaseException] = []
     texts: list[str] = []
     records: list[bytes] = []
@@ -1702,12 +1710,14 @@ def test_encode_saved_entity_from_handler_during_apply(tmp_path, slow_plugin):
 
 
 def apply_rendering(directory: Path, slow_plugin: Path, render: bool) -> tuple[list[tuple[str, str]], list[dict]]:
-    """Apply SLOW_ONE in ``directory``, rendering every create success record when ``render`` is set.
+    """Apply SLOW_PAIR in ``directory``, rendering the first resource's create success record when ``render`` is set.
 
     Returns each event's operation and phase in order, and the records the
-    store saved, decoded.
+    store saved, decoded. Log events are left out: the plugins' log lines
+    reach the engine on their own stream, so how many arrive before the apply
+    ends, and where they fall among the other events, varies between runs.
     """
-    config = write_config(directory, SLOW_ONE)
+    config = write_config(directory, SLOW_PAIR)
     store = MemoryStore()
     events: list[tuple[str, str]] = []
     raised: list[BaseException] = []
@@ -1719,7 +1729,8 @@ def apply_rendering(directory: Path, slow_plugin: Path, render: bool) -> tuple[l
                 configs[0].encode_saved_entity(event.data, include_computed=True)
             except BaseException as err:
                 raised.append(err)
-        events.append((event.operation, event.phase))
+        if event.phase != "log":
+            events.append((event.operation, event.phase))
 
     with xcl.Config(
         registries=[plugin_registry(slow_plugin)],
@@ -1750,7 +1761,7 @@ def test_apply_unchanged_by_rendering_in_handler(tmp_path, slow_plugin):
 
 
 def test_encode_entity_from_handler_during_apply_refused(tmp_path, slow_plugin):
-    config = write_config(tmp_path, SLOW_ONE)
+    config = write_config(tmp_path, SLOW_PAIR)
     raised: list[BaseException] = []
     texts: list[str] = []
     configs: list[xcl.Config] = []
@@ -1780,7 +1791,7 @@ def test_encode_entity_from_handler_during_apply_refused(tmp_path, slow_plugin):
 
 
 def test_encode_edited_entity_from_handler_during_apply_refused(tmp_path, slow_plugin):
-    config = write_config(tmp_path, SLOW_ONE)
+    config = write_config(tmp_path, SLOW_PAIR)
     raised: list[BaseException] = []
     texts: list[str] = []
     configs: list[xcl.Config] = []
@@ -1809,7 +1820,7 @@ def test_encode_edited_entity_from_handler_during_apply_refused(tmp_path, slow_p
 
 
 def test_encode_saved_invalid_record_from_handler_during_apply(tmp_path, slow_plugin):
-    config = write_config(tmp_path, SLOW_ONE)
+    config = write_config(tmp_path, SLOW_PAIR)
     raised: list[BaseException] = []
     texts: list[str] = []
     configs: list[xcl.Config] = []
@@ -1837,7 +1848,7 @@ def test_encode_saved_invalid_record_from_handler_during_apply(tmp_path, slow_pl
 
 
 def test_encode_saved_unregistered_record_from_handler_during_apply(tmp_path, slow_plugin):
-    config = write_config(tmp_path, SLOW_ONE)
+    config = write_config(tmp_path, SLOW_PAIR)
     raised: list[BaseException] = []
     texts: list[str] = []
     configs: list[xcl.Config] = []

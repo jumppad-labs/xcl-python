@@ -7,6 +7,7 @@ naming the fixture and the first JSON path where they differ.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 Difference = tuple[str, Any, Any]
@@ -117,7 +118,8 @@ def test_parity_unsupported_block_report_is_byte_for_byte(run_parity):
     go, python = run_parity("unsupported_block")
 
     assert python["printed_apply"] == go["printed_apply"]
-    assert "  on <fixture>/main.xcl line 7, in app.api, field timeout[0]:\n" in python["printed_apply"]
+    # the engine names the file with the platform's separator
+    assert f"  on <fixture>{os.sep}main.xcl line 7, in app.api, field timeout[0]:\n" in python["printed_apply"]
 
 
 def test_parity_plugin_entities_printing_and_log(run_parity):

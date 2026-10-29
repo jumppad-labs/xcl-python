@@ -28,8 +28,12 @@ def load_tokens(reference_dir: Path, name: str) -> list[Token]:
 
 
 def read_reference(reference_dir: Path, file_name: str) -> str:
-    """A reference output, read as bytes and decoded as UTF-8 with no newline translation."""
-    return (reference_dir / file_name).read_bytes().decode("utf-8")
+    """A reference output, read as bytes and decoded as UTF-8, with CRLF line ends turned back into LF.
+
+    The files are committed with LF line ends, but a Windows checkout with
+    core.autocrlf on writes them with CRLF.
+    """
+    return (reference_dir / file_name).read_bytes().decode("utf-8").replace("\r\n", "\n")
 
 
 def test_report_plain_matches_reference(reference_dir: Path) -> None:
