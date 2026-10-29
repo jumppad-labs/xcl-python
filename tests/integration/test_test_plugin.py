@@ -243,7 +243,7 @@ def test_sensitive_secret_redacted_in_events(tmp_path: Path, installed_release: 
         state_path=tmp_path / "state",
         variables=variables,
         on_event=events.append,
-        event_data="processed",
+        event_data=xcl.EventDataLevel.PROCESSED,
     ) as c:
         try:
             c.apply(TEST_PLUGIN_CONFIG)

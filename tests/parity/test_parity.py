@@ -7,6 +7,7 @@ naming the fixture and the first JSON path where they differ.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 Difference = tuple[str, Any, Any]
@@ -105,3 +106,27 @@ def test_parity_encode(run_parity):
     go, python = run_parity("encode")
 
     assert_same_record("encode", go, python)
+
+
+def test_parity_unsupported_block(run_parity):
+    go, python = run_parity("unsupported_block")
+
+    assert_same_record("unsupported_block", go, python)
+
+
+def test_parity_unsupported_block_report_is_byte_for_byte(run_parity):
+    go, python = run_parity("unsupported_block")
+
+    assert python["printed_apply"] == go["printed_apply"]
+    # the engine names the file with the platform's separator
+    assert f"  on <fixture>{os.sep}main.xcl line 7, in app.api, field timeout[0]:\n" in python["printed_apply"]
+
+
+def test_parity_plugin_entities_printing_and_log(run_parity):
+    go, python = run_parity("plugin_entities")
+
+    assert python["printed_entities"] == go["printed_entities"]
+    assert python["printed_diff_before"] == go["printed_diff_before"]
+    assert python["printed_diff_changed"] == go["printed_diff_changed"]
+    assert python["log"] == go["log"]
+    assert {"level": "info", "message": "create success", "resource": "resource.recording.first", "operation": "create"} in python["log"]

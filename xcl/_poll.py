@@ -28,6 +28,7 @@ from xcl._core import core_pb2
 from xcl._functions import call_function, failed_result
 from xcl.diff import Diff
 from xcl.events import Event
+from xcl.highlight._kinds import _tokens_from_proto
 
 # POLL_WAIT_MS is how long one Poll may block; it bounds how quickly a cancel
 # is noticed on the Python side
@@ -69,6 +70,9 @@ class Handlers:
     store: Optional[Any] = None
     on_event: Optional[Callable[[Event], Any]] = None
     classes: Optional[ClassMap] = None
+    # config is the configuration whose operations these handlers answer,
+    # attached to every event it delivers
+    config: Optional[Any] = None
 
 
 class Operation:
@@ -128,7 +132,7 @@ class Operation:
         if self._finished.HasField("error"):
             raise _errors.from_proto(self._finished.error)
         if self._finished.diff_json:
-            return Diff._from_json(self._finished.diff_json)
+            return Diff._from_json(self._finished.diff_json, tokens=tuple(_tokens_from_proto(self._finished.diff_tokens)))
         return None
 
 
@@ -197,7 +201,7 @@ def _dispatch(op: Operation, response: core_pb2.PollResponse, handlers: Handlers
     kind = response.WhichOneof("task")
     if kind == "event":
         if handlers.on_event is not None:
-            handlers.on_event(Event._from_proto(response.event, handlers.classes))
+            handlers.on_event(Event._from_proto(response.event, handlers.classes, handlers.config))
     elif kind == "state":
         op.complete(response.state.task_id, answer_state(handlers.store, response.state))
     elif kind == "function":

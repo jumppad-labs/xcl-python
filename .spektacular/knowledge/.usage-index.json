@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "entries": {
+    "gotchas/aio-events-out-of-order.md": {
+      "created": "2026-10-23T10:14:59.529431703Z",
+      "tracked_since": "2026-10-26T08:33:09.576183409Z",
+      "discoveries": {
+        "count": 1,
+        "last": "2026-10-26T10:33:13.109889552Z",
+        "recent": [
+          {
+            "at": "2026-10-26T10:33:13.109889552Z"
+          }
+        ]
+      },
+      "retrievals": {
+        "count": 3,
+        "last": "2026-10-26T13:19:04.522610393Z",
+        "recent": [
+          {
+            "at": "2026-10-26T10:33:38.284283544Z"
+          },
+          {
+            "at": "2026-10-26T12:10:34.307919843Z"
+          },
+          {
+            "at": "2026-10-26T13:19:04.522610393Z"
+          }
+        ]
+      }
+    },
+    "gotchas/aio-state-tasks-run-beside-handlers.md": {
+      "created": "2026-10-26T10:34:05.328377264Z",
+      "tracked_since": "2026-10-26T10:34:05.328377264Z",
+      "discoveries": {
+        "count": 0
+      },
+      "retrievals": {
+        "count": 3,
+        "last": "2026-10-29T07:40:34.888834114Z",
+        "recent": [
+          {
+            "at": "2026-10-26T12:10:34.31840546Z"
+          },
+          {
+            "at": "2026-10-26T13:19:04.533082511Z"
+          },
+          {
+            "at": "2026-10-29T07:40:34.888834114Z",
+            "workflow": "implement",
+            "spec": "20261016064106-8931613a-python-encode-entity"
+          }
+        ]
+      }
+    },
+    "gotchas/ci-regenerates-stubs.md": {
+      "created": "2026-10-23T10:14:59.517431609Z",
+      "tracked_since": "2026-10-26T08:33:09.576183409Z",
+      "discoveries": {
+        "count": 4,
+        "last": "2026-10-29T07:40:34.892456552Z",
+        "recent": [
+          {
+            "at": "2026-10-26T08:33:09.576183409Z"
+          },
+          {
+            "at": "2026-10-27T07:04:08.535467063Z"
+          },
+          {
+            "at": "2026-10-27T07:04:12.366180951Z"
+          },
+          {
+            "at": "2026-10-29T07:40:34.892456552Z"
+          }
+        ]
+      },
+      "retrievals": {
+        "count": 1,
+        "last": "2026-10-26T12:10:34.297885537Z",
+        "recent": [
+          {
+            "at": "2026-10-26T12:10:34.297885537Z"
+          }
+        ]
+      }
+    },
+    "gotchas/error-event-report-once.md": {
+      "created": "2026-10-26T13:14:44.112171265Z",
+      "tracked_since": "2026-10-26T13:14:44.112171265Z",
+      "discoveries": {
+        "count": 0
+      },
+      "retrievals": {
+        "count": 1,
+        "last": "2026-10-26T13:19:04.512056855Z",
+        "recent": [
+          {
+            "at": "2026-10-26T13:19:04.512056855Z"
+          }
+        ]
+      }
+    },
+    "gotchas/matching-go-log-lines.md": {
+      "created": "2026-10-23T10:14:59.540431789Z",
+      "tracked_since": "2026-10-26T08:33:09.576183409Z",
+      "discoveries": {
+        "count": 0
+      },
+      "retrievals": {
+        "count": 2,
+        "last": "2026-10-26T13:19:04.543598908Z",
+        "recent": [
+          {
+            "at": "2026-10-26T12:10:39.357043515Z"
+          },
+          {
+            "at": "2026-10-26T13:19:04.543598908Z"
+          }
+        ]
+      }
+    },
+    "gotchas/py-typed-marker.md": {
+      "created": "2026-10-23T10:14:59.459431155Z",
+      "tracked_since": "2026-10-26T08:33:09.576183409Z",
+      "discoveries": {
+        "count": 1,
+        "last": "2026-10-26T11:36:15.862106556Z",
+        "recent": [
+          {
+            "at": "2026-10-26T11:36:15.862106556Z"
+          }
+        ]
+      },
+      "retrievals": {
+        "count": 2,
+        "last": "2026-10-26T12:10:39.366513198Z",
+        "recent": [
+          {
+            "at": "2026-10-26T08:36:34.186955243Z"
+          },
+          {
+            "at": "2026-10-26T12:10:39.366513198Z"
+          }
+        ]
+      }
+    },
+    "gotchas/strenum-equals-string.md": {
+      "created": "2026-10-23T10:14:59.471431249Z",
+      "tracked_since": "2026-10-26T08:33:09.576183409Z",
+      "discoveries": {
+        "count": 0
+      },
+      "retrievals": {
+        "count": 0
+      }
+    },
+    "gotchas/test-module-basenames-unique.md": {
+      "created": "2026-10-26T13:55:28.635220382Z",
+      "tracked_since": "2026-10-26T13:55:28.635220382Z",
+      "discoveries": {
+        "count": 0
+      },
+      "retrievals": {
+        "count": 0
+      }
+    },
+    "gotchas/theme-typing-mapping-keys.md": {
+      "created": "2026-10-26T12:30:07.702774137Z",
+      "tracked_since": "2026-10-26T12:30:07.702774137Z",
+      "discoveries": {
+        "count": 0
+      },
+      "retrievals": {
+        "count": 1,
+        "last": "2026-10-26T13:19:04.554121516Z",
+        "recent": [
+          {
+            "at": "2026-10-26T13:19:04.554121516Z"
+          }
+        ]
+      }
+    },
+    "gotchas/windows-checkout-crlf-and-separators.md": {
+      "created": "2026-10-29T07:40:51.267646543Z",
+      "tracked_since": "2026-10-29T07:40:51.267646543Z",
+      "discoveries": {
+        "count": 0
+      },
+      "retrievals": {
+        "count": 0
+      }
+    },
+    "learnings/test-suite-in-a-spec-worktree.md": {
+      "created": "2026-10-26T08:33:31.225912872Z",
+      "tracked_since": "2026-10-26T08:33:31.225912872Z",
+      "discoveries": {
+        "count": 1,
+        "last": "2026-10-29T07:40:34.892456552Z",
+        "recent": [
+          {
+            "at": "2026-10-29T07:40:34.892456552Z"
+          }
+        ]
+      },
+      "retrievals": {
+        "count": 5,
+        "last": "2026-10-26T13:55:28.588130308Z",
+        "recent": [
+          {
+            "at": "2026-10-26T09:17:34.335400875Z"
+          },
+          {
+            "at": "2026-10-26T12:10:34.288555965Z"
+          },
+          {
+            "at": "2026-10-26T12:40:54.157557955Z"
+          },
+          {
+            "at": "2026-10-26T13:19:04.564478203Z"
+          },
+          {
+            "at": "2026-10-26T13:55:28.588130308Z"
+          }
+        ]
+      }
+    }
+  }
+}

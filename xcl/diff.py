@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from xcl._types import UNKNOWN
+from xcl.highlight._kinds import Token
 
 
 @dataclasses.dataclass(frozen=True)
@@ -58,14 +59,21 @@ class ResourceDiff:
 
 @dataclasses.dataclass(frozen=True)
 class Diff:
-    """What an apply would do: a summary and the entities it would touch, as ``diff`` returns it."""
+    """What an apply would do: a summary and the entities it would touch, as ``diff`` returns it.
+
+    ``tokens`` is the git-style change summary Go's ``xcl.PrintDiff`` prints,
+    as labelled text (a tuple of :class:`xcl.highlight.Token`), laid out by
+    the engine; :func:`xcl.print_diff` prints it in any format. It is empty
+    for a ``Diff`` built by hand.
+    """
 
     summary: Summary
     resources: tuple[ResourceDiff, ...]
     raw: dict[str, Any] = dataclasses.field(default_factory=dict, compare=False, repr=False)
+    tokens: tuple[Token, ...] = dataclasses.field(default=(), compare=False, repr=False)
 
     @classmethod
-    def _from_json(cls, data: bytes) -> Diff:
+    def _from_json(cls, data: bytes, tokens: tuple[Token, ...] = ()) -> Diff:
         raw = json.loads(data) if data else {}
         summary = raw.get("summary") or {}
         resources = []
@@ -98,6 +106,7 @@ class Diff:
             summary=Summary(**{k: int(summary.get(k, 0)) for k in ("create", "update", "replace", "delete", "unchanged")}),
             resources=tuple(resources),
             raw=raw,
+            tokens=tokens,
         )
 
     def changed(self) -> int:

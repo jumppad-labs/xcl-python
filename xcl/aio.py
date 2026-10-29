@@ -2,11 +2,16 @@
 
 Every operation and lookup of :class:`xcl.Config` is offered as an awaitable
 that never blocks the event loop. The engine is polled from a dedicated
-executor thread, and each task the engine posts is dispatched as an asyncio
-task: a registered ``async def`` function, event handler or state-store
-method is awaited on the loop, and a plain one runs in the default executor.
-Cancelling the awaiting task cancels the engine's work, waits for it to stop
-and save its progress, then lets the cancellation through.
+executor thread. Each state-store or function task the engine posts is
+dispatched as its own asyncio task, so they run concurrently: a registered
+``async def`` function or state-store method is awaited on the loop, and a
+plain one runs in the default executor. Events reach ``on_event`` one at a
+time, in the order the engine sent them, as they do with :class:`xcl.Config`
+and in Go: a plain handler runs in the default executor and an ``async def``
+one is awaited on the loop, and the next event waits until the handler has
+finished with the last. Cancelling the awaiting task cancels the engine's
+work, waits for it to stop and save its progress, then lets the cancellation
+through.
 """
 
 from __future__ import annotations
@@ -16,8 +21,9 @@ import concurrent.futures
 import inspect
 import json
 import os
+import sys
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, Optional
+from typing import Any, Optional, TextIO
 
 from xcl import _errors
 from xcl._client import Client, default_client
@@ -26,10 +32,19 @@ from xcl._classes import ClassMap
 from xcl._functions import decode_args, encode_result, failed_result
 from xcl._poll import POLL_WAIT_MS, Operation, StateStore, answer_state
 from xcl._schema import record_bytes
-from xcl.config import EVENT_DATA_LEVELS, _encode_options
+from xcl.config import (
+    _encode_entity_request,
+    _encode_options,
+    _encode_saved_entity_request,
+    _event_data_level,
+    _saved_entity_tokens,
+)
 from xcl.config import Config as _SyncConfig
 from xcl.diff import Diff
-from xcl.events import Event
+from xcl.events import Event, EventDataLevel
+from xcl.highlight._formatters import PLAIN, Formatter
+from xcl.highlight._kinds import Token, _tokens_from_proto
+from xcl.highlight._theme import DEFAULT_THEME, Theme
 from xcl.mask import Mask
 
 
@@ -38,7 +53,10 @@ class Config:
 
     It takes the options of :class:`xcl.Config`; ``on_event``, the
     ``state_store`` methods and registered functions may be ``async def``.
-    Use it as ``async with``, or ``await close()`` when done.
+    ``on_event`` is called once per event, in the order the engine sent
+    them, never before the previous call has finished, and an operation
+    returns only once every event has been handled. Use it as
+    ``async with``, or ``await close()`` when done.
     """
 
     def __init__(
@@ -50,12 +68,16 @@ class Config:
         state_mask: Optional[Mask] = None,
         variables: Optional[Mapping[str, Any]] = None,
         on_event: Optional[Callable[[Event], Any]] = None,
-        event_data: str = "none",
+        event_data: EventDataLevel = EventDataLevel.NONE,
         event_buffer_size: int = 0,
         event_mask: Optional[Mask] = None,
         no_event_mask: bool = False,
         client: Optional[Client] = None,
     ) -> None:
+        level = _event_data_level(event_data)
+        # the level the configuration was created with, which tells a
+        # handler whether an event without data is expected to have none
+        self._event_data = event_data
         self._client = client or default_client()
         self._registries = list(registries)
         self._classes = ClassMap.from_registries(self._registries)
@@ -70,15 +92,13 @@ class Config:
 
         if state_path is not None and state_store is not None:
             raise ValueError("give state_path or state_store, not both")
-        if event_data not in EVENT_DATA_LEVELS:
-            raise ValueError(f'event_data must be "none", "raw" or "processed", not {event_data!r}')
 
         self._request = _SyncConfig._request(
             self,  # type: ignore[arg-type]
             state_path=state_path,
             state_mask=state_mask,
             variables=variables,
-            event_data=event_data,
+            event_data=level,
             event_buffer_size=event_buffer_size,
             event_mask=event_mask,
             no_event_mask=no_event_mask,
@@ -130,15 +150,26 @@ class Config:
 
     async def _drive(self, op: Operation) -> Optional[Diff]:
         pending: set[asyncio.Task[Any]] = set()
+        # events go to one consumer, which hands them to on_event one at a
+        # time and in order; it is pending like any task, so it is awaited
+        # before the operation returns and cancelled with the rest
+        events: asyncio.Queue[Optional[Event]] = asyncio.Queue()
+        if self._on_event is not None:
+            consumer = asyncio.create_task(self._deliver_events(events))
+            pending.add(consumer)
+            consumer.add_done_callback(pending.discard)
         try:
             while not op.done:
                 response = await self._in_executor(op.step, POLL_WAIT_MS)
                 if response is None:
                     continue
-                task = self._dispatch(op, response)
+                task = self._dispatch(op, response, events)
                 if task is not None:
                     pending.add(task)
                     task.add_done_callback(pending.discard)
+            # no event follows the finished task: the consumer drains what is
+            # queued, then stops
+            events.put_nowait(None)
             await asyncio.gather(*pending, return_exceptions=True)
         except asyncio.CancelledError:
             # stop the engine's work, let it save its progress, then let the
@@ -155,21 +186,36 @@ class Config:
         while not op.done:
             await self._in_executor(op.step, POLL_WAIT_MS)
 
-    def _dispatch(self, op: Operation, response: core_pb2.PollResponse) -> Optional[asyncio.Task[Any]]:
+    def _dispatch(
+        self,
+        op: Operation,
+        response: core_pb2.PollResponse,
+        events: asyncio.Queue[Optional[Event]],
+    ) -> Optional[asyncio.Task[Any]]:
         kind = response.WhichOneof("task")
         if kind == "event":
-            if self._on_event is None:
-                return None
-            return asyncio.create_task(self._handle_event(response.event))
+            if self._on_event is not None:
+                events.put_nowait(Event._from_proto(response.event, self._classes, self))
+            return None
         if kind == "state":
             return asyncio.create_task(self._handle_state(op, response.state))
         if kind == "function":
             return asyncio.create_task(self._handle_function(op, response.function))
         return None
 
-    async def _handle_event(self, event: core_pb2.Event) -> None:
+    async def _deliver_events(self, events: asyncio.Queue[Optional[Event]]) -> None:
+        """Hand each queued event to ``on_event`` in order, each call finished before the next starts, until ``None``."""
         assert self._on_event is not None
-        await _call_maybe_async(self._on_event, Event._from_proto(event, self._classes))
+        while True:
+            event = await events.get()
+            if event is None:
+                return
+            try:
+                await _call_maybe_async(self._on_event, event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a handler's failure must not affect the operation or later events
+                pass
 
     async def _handle_state(self, op: Operation, task: core_pb2.StateTask) -> None:
         result = await _answer_state_async(self._state_store, task)
@@ -263,18 +309,57 @@ class Config:
         include_empty: bool = False,
         reveal_sensitive: bool = False,
         show_references: bool = False,
-        highlight: bool = False,
     ) -> str:
-        """An entity rendered as configuration text; see :meth:`xcl.Config.encode_entity`."""
+        """An entity rendered as configuration text, refused while an operation runs; see :meth:`xcl.Config.encode_entity`."""
         # the record is built first, so a value that is not an entity fails
         # before anything reaches the engine
-        request = core_pb2.EncodeEntityRequest(
-            entity=record_bytes(entity, self._classes),
-            highlight=highlight,
-            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        request = _encode_entity_request(
+            record_bytes(entity, self._classes),
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=False,
         )
         response = await self._lookup("EncodeEntity", request)
         return response.text.decode()
+
+    async def entity_tokens(
+        self,
+        entity: object,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of an entity's configuration text; see :meth:`xcl.Config.entity_tokens`."""
+        request = _encode_entity_request(
+            record_bytes(entity, self._classes),
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=True,
+        )
+        response = await self._lookup("EncodeEntity", request)
+        return _tokens_from_proto(response.tokens)
+
+    async def print_entity(
+        self,
+        entity: object,
+        file: TextIO | None = None,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        formatter: Formatter = PLAIN,
+        theme: Theme = DEFAULT_THEME,
+    ) -> None:
+        """Print an entity to ``file`` (``sys.stdout`` by default) as configuration text; see :meth:`xcl.Config.print_entity`."""
+        tokens = await self.entity_tokens(
+            entity,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+        formatter.format(sys.stdout if file is None else file, theme, tokens)
 
     async def encode_saved_entity(
         self,
@@ -284,16 +369,83 @@ class Config:
         include_empty: bool = False,
         reveal_sensitive: bool = False,
         show_references: bool = False,
-        highlight: bool = False,
     ) -> str:
-        """A saved record rendered as configuration text; see :meth:`xcl.Config.encode_saved_entity`."""
-        request = core_pb2.EncodeSavedEntityRequest(
-            entity=bytes(data),
-            highlight=highlight,
-            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        """A saved record rendered as configuration text, allowed during an operation, including from an event handler; see :meth:`xcl.Config.encode_saved_entity`."""
+        request = _encode_saved_entity_request(
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=False,
         )
         response = await self._lookup("EncodeSavedEntity", request)
         return response.text.decode()
+
+    async def saved_entity_tokens(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of a saved record's configuration text, allowed during an operation; see :meth:`xcl.Config.saved_entity_tokens`."""
+        request = _encode_saved_entity_request(
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=True,
+        )
+        response = await self._lookup("EncodeSavedEntity", request)
+        return _tokens_from_proto(response.tokens)
+
+    def _saved_entity_tokens_now(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of a saved record, asked of the engine with a blocking call on the calling thread.
+
+        Private: it is the render :mod:`xcl.prettylog` makes from an
+        ``on_event`` handler, which this configuration runs on the default
+        executor for a plain handler. The call goes straight through the
+        client, never through the single-worker executor that polls the
+        operation, so it never queues behind a waiting ``Poll``; the
+        transport matches each response to its call, so calls from
+        different threads do not wait on each other.
+        """
+        if not self._handle:
+            raise RuntimeError("the configuration is not open")
+        return _saved_entity_tokens(
+            self._client,
+            self._handle,
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        )
+
+    async def print_saved_entity(
+        self,
+        data: bytes,
+        file: TextIO | None = None,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        formatter: Formatter = PLAIN,
+        theme: Theme = DEFAULT_THEME,
+    ) -> None:
+        """Print a saved record to ``file`` (``sys.stdout`` by default) as configuration text, allowed during an operation; see :meth:`xcl.Config.print_saved_entity`."""
+        tokens = await self.saved_entity_tokens(
+            data,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+        formatter.format(sys.stdout if file is None else file, theme, tokens)
 
 
 async def _call_maybe_async(fn: Callable[..., Any], *args: Any) -> Any:

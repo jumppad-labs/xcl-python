@@ -58,3 +58,7 @@ def test_singletons_types_match_fixture(parity_fixtures):
 
 def test_encode_types_match_fixture(parity_fixtures):
     assert _derived("encode") == _documents(parity_fixtures, "encode")
+
+
+def test_unsupported_block_types_match_fixture(parity_fixtures):
+    assert _derived("unsupported_block") == _documents(parity_fixtures, "unsupported_block")

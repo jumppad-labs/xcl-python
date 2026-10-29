@@ -1,8 +1,9 @@
 """Every public name of the package has a docstring.
 
 The check walks the package's public objects, not the repository's files:
-``xcl.__all__``, every public attribute of ``xcl.aio`` and ``xcl.mask``, and
-the public methods of every public class.
+``xcl.__all__``, every public attribute of ``xcl.aio``, ``xcl.mask``,
+``xcl.highlight`` and ``xcl.prettylog``, and the public methods of every
+public class.
 """
 
 from __future__ import annotations
@@ -11,7 +12,9 @@ import inspect
 
 import xcl
 import xcl.aio
+import xcl.highlight
 import xcl.mask
+import xcl.prettylog
 
 
 def _missing_docstrings():
@@ -37,10 +40,14 @@ def _missing_docstrings():
                     target = target.__func__ if isinstance(target, (classmethod, staticmethod)) else target
                     check(f"xcl.{name}.{attr}", target)
 
-    for module in (xcl.aio, xcl.mask):
+    for module in (xcl.aio, xcl.mask, xcl.highlight, xcl.prettylog):
         check(module.__name__, module)
         for attr in getattr(module, "__all__", []):
             obj = getattr(module, attr)
+            # a constant, such as xcl.highlight.DEFAULT_THEME, cannot carry
+            # a docstring of its own, as in the xcl.__all__ walk above
+            if not (inspect.isclass(obj) or inspect.isfunction(obj) or inspect.ismodule(obj)):
+                continue
             check(f"{module.__name__}.{attr}", obj)
             if inspect.isclass(obj):
                 for member_name, member in vars(obj).items():
@@ -61,3 +68,5 @@ def test_package_and_submodules_have_docstrings():
     assert (xcl.__doc__ or "").strip()
     assert (xcl.aio.__doc__ or "").strip()
     assert (xcl.mask.__doc__ or "").strip()
+    assert (xcl.highlight.__doc__ or "").strip()
+    assert (xcl.prettylog.__doc__ or "").strip()

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, Optional
+from typing import Any, Optional, TextIO
 
 from xcl import _errors
 from xcl._client import Client, default_client
@@ -14,14 +15,32 @@ from xcl._classes import ClassMap
 from xcl._poll import Handlers, Operation, StateStore, drive
 from xcl._schema import hydrate, record_bytes
 from xcl.diff import Diff
-from xcl.events import Event
+from xcl.events import Event, EventDataLevel
+from xcl.highlight._formatters import PLAIN, Formatter
+from xcl.highlight._kinds import Token, _tokens_from_proto
+from xcl.highlight._theme import DEFAULT_THEME, Theme
 from xcl.mask import Mask
 
-EVENT_DATA_LEVELS = {
-    "none": core_pb2.EVENT_DATA_NONE,
-    "raw": core_pb2.EVENT_DATA_RAW,
-    "processed": core_pb2.EVENT_DATA_PROCESSED,
+_EVENT_DATA_WIRE: dict[EventDataLevel, core_pb2.EventDataLevel] = {
+    EventDataLevel.NONE: core_pb2.EVENT_DATA_NONE,
+    EventDataLevel.RAW: core_pb2.EVENT_DATA_RAW,
+    EventDataLevel.PROCESSED: core_pb2.EVENT_DATA_PROCESSED,
 }
+
+
+def _event_data_level(value: object) -> core_pb2.EventDataLevel:
+    """Check the ``event_data`` option and return the protocol level it carries.
+
+    Only an :class:`xcl.EventDataLevel` member is accepted. The check is on
+    type, not equality: a member compares and hashes equal to its string, so
+    a lookup alone would let a bare word through.
+    """
+    if not isinstance(value, EventDataLevel):
+        raise TypeError(
+            f"event_data must be an xcl.EventDataLevel, such as xcl.EventDataLevel.PROCESSED, "
+            f"not {value!r} ({type(value).__name__})"
+        )
+    return _EVENT_DATA_WIRE[value]
 
 
 class Config:
@@ -33,7 +52,8 @@ class Config:
     in ``state_store``, an object with ``load``, ``save``, ``exists`` and
     ``clear``; ``state_mask`` masks sensitive values in it. ``variables`` are
     passed in by name. ``on_event`` receives every :class:`xcl.Event`;
-    ``event_data`` is ``"none"``, ``"raw"`` or ``"processed"``,
+    ``event_data`` is an :class:`xcl.EventDataLevel`,
+    ``EventDataLevel.NONE`` (the default), ``RAW`` or ``PROCESSED``,
     ``event_buffer_size`` bounds the events waiting for the handler, and
     ``event_mask`` masks sensitive values in event data (redacted unless
     ``no_event_mask``).
@@ -53,12 +73,16 @@ class Config:
         state_mask: Optional[Mask] = None,
         variables: Optional[Mapping[str, Any]] = None,
         on_event: Optional[Callable[[Event], Any]] = None,
-        event_data: str = "none",
+        event_data: EventDataLevel = EventDataLevel.NONE,
         event_buffer_size: int = 0,
         event_mask: Optional[Mask] = None,
         no_event_mask: bool = False,
         client: Optional[Client] = None,
     ) -> None:
+        level = _event_data_level(event_data)
+        # the level the configuration was created with, which tells a
+        # handler whether an event without data is expected to have none
+        self._event_data = event_data
         self._client = client or default_client()
         self._registries = list(registries)
         self._classes = ClassMap.from_registries(self._registries)
@@ -67,19 +91,19 @@ class Config:
         self._functions: dict[str, Callable[..., Any]] = {}
         for r in self._registries:
             self._functions.update(getattr(r, "functions", {}) or {})
-        self._handlers = Handlers(functions=self._functions, store=state_store, on_event=on_event, classes=self._classes)
+        self._handlers = Handlers(
+            functions=self._functions, store=state_store, on_event=on_event, classes=self._classes, config=self
+        )
         self._handle: Optional[int] = None
 
         if state_path is not None and state_store is not None:
             raise ValueError("give state_path or state_store, not both")
-        if event_data not in EVENT_DATA_LEVELS:
-            raise ValueError(f'event_data must be "none", "raw" or "processed", not {event_data!r}')
 
         request = self._request(
             state_path=state_path,
             state_mask=state_mask,
             variables=variables,
-            event_data=event_data,
+            event_data=level,
             event_buffer_size=event_buffer_size,
             event_mask=event_mask,
             no_event_mask=no_event_mask,
@@ -92,7 +116,7 @@ class Config:
         state_path: Optional[str | os.PathLike[str]] = None,
         state_mask: Optional[Mask] = None,
         variables: Optional[Mapping[str, Any]] = None,
-        event_data: str = "none",
+        event_data: core_pb2.EventDataLevel = core_pb2.EVENT_DATA_NONE,
         event_buffer_size: int = 0,
         event_mask: Optional[Mask] = None,
         no_event_mask: bool = False,
@@ -101,7 +125,7 @@ class Config:
             registries=[r._to_proto() for r in self._registries],
             events=self._on_event is not None,
             event_buffer_size=int(event_buffer_size),
-            event_data=EVENT_DATA_LEVELS[event_data],
+            event_data=event_data,
             no_event_mask=bool(no_event_mask),
         )
         if state_path is not None:
@@ -218,7 +242,6 @@ class Config:
         include_empty: bool = False,
         reveal_sensitive: bool = False,
         show_references: bool = False,
-        highlight: bool = False,
     ) -> str:
         """An entity rendered as configuration text, the same text Go's ``xcl.EncodeEntity`` writes.
 
@@ -239,22 +262,83 @@ class Config:
           edit or one set by hand, is shown as it is.
         - ``show_references`` writes each field that referred to another
           entity as the configuration wrote it, rather than its value.
-        - ``highlight`` colours the text for a terminal, as
-          :meth:`encode_saved_entity` does.
 
         Raises :class:`xcl.NotEncodableError` for a value that is not an
         entity, a variable, output or module, or a value with no
         configuration form, :class:`xcl.NotRegisteredError` for an instance
         of a class this configuration did not register, and
-        :class:`xcl.OperationInProgressError` while an operation runs.
+        :class:`xcl.OperationInProgressError` while an operation runs,
+        including from an ``on_event`` handler, because it reads the
+        engine's own copy of the entity. To render from an event handler,
+        use ``encode_saved_entity(event.data)``, which is allowed then.
         """
-        request = core_pb2.EncodeEntityRequest(
-            entity=record_bytes(entity, self._classes),
-            highlight=highlight,
-            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        request = _encode_entity_request(
+            record_bytes(entity, self._classes),
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=False,
         )
         response = self._client.call(self._open(), "EncodeEntity", request)
         return response.text.decode()
+
+    def entity_tokens(
+        self,
+        entity: object,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of an entity's configuration text, as Go's ``xcl.EntityTokens`` returns it.
+
+        The tokens, joined in order, are the text :meth:`encode_entity`
+        returns with the same choices, each piece labelled with its
+        :class:`xcl.highlight.Kind`, such as an attribute name or a string,
+        for a format of your own. It raises what :meth:`encode_entity`
+        raises, including :class:`xcl.OperationInProgressError` while an
+        operation runs.
+        """
+        request = _encode_entity_request(
+            record_bytes(entity, self._classes),
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=True,
+        )
+        response = self._client.call(self._open(), "EncodeEntity", request)
+        return _tokens_from_proto(response.tokens)
+
+    def print_entity(
+        self,
+        entity: object,
+        file: TextIO | None = None,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        formatter: Formatter = PLAIN,
+        theme: Theme = DEFAULT_THEME,
+    ) -> None:
+        """Print an entity to ``file`` as configuration text, in one call, as Go's ``xcl.PrintEntity`` does.
+
+        ``file`` is ``sys.stdout`` when not given. The text is the one
+        :meth:`encode_entity` returns with the same choices, written in the
+        format ``formatter`` chooses (plain text by default) and styled by
+        ``theme``; the formatter is given the whole labelled text at once::
+
+            cfg.print_entity(db, include_computed=True, formatter=xcl.highlight.for_stream(sys.stdout))
+
+        It raises what :meth:`encode_entity` raises, writing nothing; to
+        print from an event handler while an operation runs, use
+        :meth:`print_saved_entity`.
+        """
+        tokens = self.entity_tokens(
+            entity,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+        formatter.format(sys.stdout if file is None else file, theme, tokens)
 
     def encode_saved_entity(
         self,
@@ -264,7 +348,6 @@ class Config:
         include_empty: bool = False,
         reveal_sensitive: bool = False,
         show_references: bool = False,
-        highlight: bool = False,
     ) -> str:
         """A saved record, as state stores it and events carry it, rendered as configuration text.
 
@@ -275,15 +358,112 @@ class Config:
         value, ``reveal_sensitive`` each sensitive value the record holds
         for real rather than ``(sensitive)``, and ``show_references`` each
         field that referred to another entity as the configuration wrote
-        it. ``highlight`` colours the text for a terminal.
+        it.
+
+        It can be called at any time, including from an ``on_event`` handler
+        while an operation runs, because it reads none of the
+        configuration's entities. A program created with
+        ``event_data=xcl.EventDataLevel.PROCESSED`` can therefore print each
+        created resource as its create success event arrives, and the text
+        is the same as the same render after the operation.
+
+        Raises :class:`xcl.InvalidSavedDataError` for data that is not one
+        saved record, :class:`xcl.UnregisteredTypeError` for a record of a
+        type this configuration does not know, :class:`xcl.NotEncodableError`
+        for a variable, output or module, and :class:`xcl.PluginLoadError`
+        when a plugin the record needs fails to load.
         """
-        request = core_pb2.EncodeSavedEntityRequest(
-            entity=bytes(data),
-            highlight=highlight,
-            options=_encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        request = _encode_saved_entity_request(
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+            tokens=False,
         )
         response = self._client.call(self._open(), "EncodeSavedEntity", request)
         return response.text.decode()
+
+    def saved_entity_tokens(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of a saved record's configuration text.
+
+        The tokens, joined in order, are the text
+        :meth:`encode_saved_entity` returns with the same choices, each piece
+        labelled with its :class:`xcl.highlight.Kind`. Like
+        :meth:`encode_saved_entity`, it can be called from an ``on_event``
+        handler while an operation runs, and raises what it raises.
+        """
+        return self._saved_entity_tokens_now(
+            data,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+
+    def _saved_entity_tokens_now(
+        self,
+        data: bytes,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+    ) -> list[Token]:
+        """The labelled text of a saved record, asked of the engine with a blocking call on the calling thread.
+
+        Private: it is the render :mod:`xcl.prettylog` makes from an
+        ``on_event`` handler while an operation runs, which the engine
+        allows for a saved record. Both configuration flavours have it, so
+        a handler can use it whichever delivered the event.
+        """
+        return _saved_entity_tokens(
+            self._client,
+            self._open(),
+            data,
+            _encode_options(include_computed, include_empty, reveal_sensitive, show_references),
+        )
+
+    def print_saved_entity(
+        self,
+        data: bytes,
+        file: TextIO | None = None,
+        *,
+        include_computed: bool = False,
+        include_empty: bool = False,
+        reveal_sensitive: bool = False,
+        show_references: bool = False,
+        formatter: Formatter = PLAIN,
+        theme: Theme = DEFAULT_THEME,
+    ) -> None:
+        """Print a saved record to ``file`` as configuration text, in one call.
+
+        ``file`` is ``sys.stdout`` when not given. The text is the one
+        :meth:`encode_saved_entity` returns with the same choices, in the
+        format ``formatter`` chooses (plain text by default), styled by
+        ``theme``. It can be called from an ``on_event`` handler while an
+        operation runs, so a program can print each created resource as its
+        create success event arrives::
+
+            def on_event(event: xcl.Event) -> None:
+                if event.operation == "create" and event.phase == "success" and event.data:
+                    cfg.print_saved_entity(event.data, include_computed=True)
+
+        It raises what :meth:`encode_saved_entity` raises, writing nothing.
+        """
+        tokens = self.saved_entity_tokens(
+            data,
+            include_computed=include_computed,
+            include_empty=include_empty,
+            reveal_sensitive=reveal_sensitive,
+            show_references=show_references,
+        )
+        formatter.format(sys.stdout if file is None else file, theme, tokens)
 
     def _hydrate(self, data: bytes, cls: Optional[type]) -> Any:
         decoded = json.loads(data)
@@ -307,6 +487,23 @@ def _encode_options(include_computed: bool, include_empty: bool, reveal_sensitiv
         reveal_sensitive=reveal_sensitive,
         show_references=show_references,
     )
+
+
+def _encode_entity_request(record: bytes, options: core_pb2.EncodeOptions, *, tokens: bool) -> core_pb2.EncodeEntityRequest:
+    """The request rendering an entity's record, asking for its labelled text too when ``tokens`` is true."""
+    return core_pb2.EncodeEntityRequest(entity=record, options=options, tokens=tokens)
+
+
+def _encode_saved_entity_request(data: bytes, options: core_pb2.EncodeOptions, *, tokens: bool) -> core_pb2.EncodeSavedEntityRequest:
+    """The request rendering a saved record, asking for its labelled text too when ``tokens`` is true."""
+    return core_pb2.EncodeSavedEntityRequest(entity=bytes(data), options=options, tokens=tokens)
+
+
+def _saved_entity_tokens(client: Client, handle: int, data: bytes, options: core_pb2.EncodeOptions) -> list[Token]:
+    """The labelled text of a saved record, from a blocking ``EncodeSavedEntity`` call straight through ``client``."""
+    request = _encode_saved_entity_request(data, options, tokens=True)
+    response = client.call(handle, "EncodeSavedEntity", request)
+    return _tokens_from_proto(response.tokens)
 
 
 def _paths(paths: Iterable[str | os.PathLike[str]]) -> list[str]:
