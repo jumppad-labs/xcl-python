@@ -198,18 +198,24 @@ class Registry(_message.Message):
     def __init__(self, local: _Optional[_Union[LocalRegistry, _Mapping]] = ..., github: _Optional[_Union[GitHubRegistry, _Mapping]] = ...) -> None: ...
 
 class LocalRegistry(_message.Message):
-    __slots__ = ("plugin_pattern", "types", "external_plugins", "plugin_directories", "functions")
+    __slots__ = ("plugin_pattern", "types", "plugin_directories", "functions", "external_plugin_commands")
     PLUGIN_PATTERN_FIELD_NUMBER: _ClassVar[int]
     TYPES_FIELD_NUMBER: _ClassVar[int]
-    EXTERNAL_PLUGINS_FIELD_NUMBER: _ClassVar[int]
     PLUGIN_DIRECTORIES_FIELD_NUMBER: _ClassVar[int]
     FUNCTIONS_FIELD_NUMBER: _ClassVar[int]
+    EXTERNAL_PLUGIN_COMMANDS_FIELD_NUMBER: _ClassVar[int]
     plugin_pattern: str
     types: _containers.RepeatedCompositeFieldContainer[DeclaredType]
-    external_plugins: _containers.RepeatedScalarFieldContainer[str]
     plugin_directories: _containers.RepeatedScalarFieldContainer[str]
     functions: _containers.RepeatedCompositeFieldContainer[DeclaredFunction]
-    def __init__(self, plugin_pattern: _Optional[str] = ..., types: _Optional[_Iterable[_Union[DeclaredType, _Mapping]]] = ..., external_plugins: _Optional[_Iterable[str]] = ..., plugin_directories: _Optional[_Iterable[str]] = ..., functions: _Optional[_Iterable[_Union[DeclaredFunction, _Mapping]]] = ...) -> None: ...
+    external_plugin_commands: _containers.RepeatedCompositeFieldContainer[ExternalPlugin]
+    def __init__(self, plugin_pattern: _Optional[str] = ..., types: _Optional[_Iterable[_Union[DeclaredType, _Mapping]]] = ..., plugin_directories: _Optional[_Iterable[str]] = ..., functions: _Optional[_Iterable[_Union[DeclaredFunction, _Mapping]]] = ..., external_plugin_commands: _Optional[_Iterable[_Union[ExternalPlugin, _Mapping]]] = ...) -> None: ...
+
+class ExternalPlugin(_message.Message):
+    __slots__ = ("command",)
+    COMMAND_FIELD_NUMBER: _ClassVar[int]
+    command: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, command: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DeclaredType(_message.Message):
     __slots__ = ("type", "subtype", "schema")
