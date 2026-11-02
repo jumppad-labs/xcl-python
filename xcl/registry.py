@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Optional
 
 from xcl._core import core_pb2
@@ -39,7 +39,7 @@ class LocalRegistry:
         self._types: list[Registration] = []
         self._functions: dict[str, Callable[..., Any]] = {}
         self._signatures: dict[str, dict[str, Any]] = {}
-        self._external_plugins: list[str] = []
+        self._external_plugins: list[list[str]] = []
         self._plugin_directories: list[str] = []
 
     def register_type(self, cls: type, type: str, subtype: Optional[str] = None) -> None:  # noqa: A002 - mirrors the Go name
@@ -79,9 +79,27 @@ class LocalRegistry:
         self._signatures[function_name] = signature_for(fn)
         self._functions[function_name] = fn
 
-    def register_external_plugin(self, path: str | os.PathLike[str]) -> None:
-        """Use the Go-compiled plugin binary at ``path``."""
-        self._external_plugins.append(os.fspath(path))
+    def register_external_plugin(self, command: str | os.PathLike[str] | Sequence[str | os.PathLike[str]]) -> None:
+        """Use the external plugin that ``command`` starts.
+
+        ``command`` is the path of a plugin binary, such as
+        ``"./build/xcl-plugin-notes"``, or a list holding a program and its
+        arguments, such as ``["python3", "plugin.py"]`` or
+        ``["go", "run", "./cmd/notes"]``, so a plugin can run from source with
+        no build. A plugin started with arguments is named by its full
+        command line, and one started from a path by its binary's name. An
+        empty list raises :class:`SchemaError`.
+        """
+        if isinstance(command, (str, os.PathLike)):
+            self._external_plugins.append([os.fspath(command)])
+            return
+
+        words = [os.fspath(word) for word in command]
+        if not words:
+            raise SchemaError(
+                "register_external_plugin needs a command: a plugin's path, or a list holding a program and its arguments"
+            )
+        self._external_plugins.append(words)
 
     def register_plugin_directory(self, path: str | os.PathLike[str]) -> None:
         """Use every plugin binary found in the directory at ``path``."""
@@ -101,7 +119,7 @@ class LocalRegistry:
         local = core_pb2.LocalRegistry(
             plugin_pattern=self._plugin_pattern or "",
             types=[_declared_type(r) for r in self._types],
-            external_plugins=list(self._external_plugins),
+            external_plugin_commands=[core_pb2.ExternalPlugin(command=command) for command in self._external_plugins],
             plugin_directories=list(self._plugin_directories),
             functions=[
                 core_pb2.DeclaredFunction(name=name, signature=json.dumps(signature).encode())

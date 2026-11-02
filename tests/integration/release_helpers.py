@@ -35,8 +35,8 @@ TRUSTED_KEY_PATH = TESTS / "keys" / "jumppad-labs.asc"
 TEST_PLUGIN_CONFIG = os.path.abspath(Path(__file__).resolve().parent / "configs" / "test_plugin" / "main.xcl")
 
 # the long key ID of the jumppad-labs release key, tests/keys/jumppad-labs.asc,
-# which signs the plugin release's checksums file with its primary key: the
-# issuer of the published .sig, as `gpg --list-packets <sig>` prints it
+# which signs the plugin release's index with its primary key: the issuer of
+# the published .sig, as `gpg --list-packets <sig>` prints it
 # (keyid F775DA00AFD4B502, fingerprint 15BDA684...F775DA00AFD4B502)
 RELEASE_SIGNING_KEY_ID = "F775DA00AFD4B502"
 
@@ -74,49 +74,65 @@ def go_platform() -> tuple[str, str]:
     return goos, _GOARCH[machine]
 
 
+# the files every build of the test plugin holds beside its binary, which
+# the registry extracts into the cache entry with it
+ZIP_SIDECARS = ("xcl-plugin.xcl", "README.md", "LICENSE")
+
+
 @dataclasses.dataclass(frozen=True)
 class ReleaseFiles:
-    """Where an installed release lives in a cache, and what its files are called."""
+    """Where an installed release lives in a cache, and what its files are called.
+
+    The cache entry holds the release's index, its signature when the
+    release has one, this platform's zip, and the files extracted from the
+    zip: the binary and ``ZIP_SIDECARS``.
+    """
 
     cache_dir: Path
     repository: str
     version: str
     entry: Path
     binary: Path
-    archive_name: str
-    checksums_name: str
+    index_name: str
     signature_name: str
+    zip_name: str
 
     @property
-    def archive(self) -> Path:
-        return self.entry / self.archive_name
-
-    @property
-    def checksums(self) -> Path:
-        return self.entry / self.checksums_name
+    def index(self) -> Path:
+        return self.entry / self.index_name
 
     @property
     def signature(self) -> Path:
         return self.entry / self.signature_name
 
+    @property
+    def zip(self) -> Path:
+        return self.entry / self.zip_name
+
 
 def release_files(cache_dir: Path, repository: str, version: str) -> ReleaseFiles:
-    """The cache entry of ``repository`` at ``version`` under ``cache_dir`` for this host."""
+    """The cache entry of ``repository`` at ``version`` under ``cache_dir`` for this host.
+
+    The test plugin's release names its assets with ``-`` throughout, as the
+    plugin template does: ``<name>-<version>-index.xcl``, its ``.sig``, and
+    ``<name>-<version>-<os>-<arch>.zip``, where ``<version>`` has no leading
+    ``v``.
+    """
     goos, goarch = go_platform()
     owner, name = repository.split("/", 1)
     bare_version = version.removeprefix("v")
     entry = cache_dir / "github.com" / owner / name / version / f"{goos}_{goarch}"
-    extension = "zip" if goos == "windows" else "tar.gz"
     binary = name + (".exe" if goos == "windows" else "")
+    index_name = f"{name}-{bare_version}-index.xcl"
     return ReleaseFiles(
         cache_dir=cache_dir,
         repository=repository,
         version=version,
         entry=entry,
         binary=entry / binary,
-        archive_name=f"{name}_{bare_version}_{goos}_{goarch}.{extension}",
-        checksums_name=f"{name}_{bare_version}_checksums.txt",
-        signature_name=f"{name}_{bare_version}_checksums.txt.sig",
+        index_name=index_name,
+        signature_name=f"{index_name}.sig",
+        zip_name=f"{name}-{bare_version}-{goos}-{goarch}.zip",
     )
 
 
