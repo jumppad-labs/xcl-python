@@ -12,6 +12,7 @@ generic :class:`xcl.Entity` values, and always destroys what it created.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from release_helpers import (
     FIRST_ADDRESS,
     SECOND_ADDRESS,
     TEST_PLUGIN_CONFIG,
+    ZIP_SIDECARS,
     ReleaseFiles,
     github_registry,
     installed_release,
@@ -101,14 +103,17 @@ def test_test_plugin_from_path(tmp_path: Path, installed_release: ReleaseFiles):
 
 
 def test_test_plugin_from_directory(tmp_path: Path, installed_release: ReleaseFiles):
-    # the cache entry holds the binary beside the release's archive,
-    # checksums file and signature, which are named xcl-plugin-test_... but
-    # are not executable, so the default xcl-plugin-* pattern starts only
-    # the binary
+    # the cache entry holds the binary beside the release's index, signature
+    # and zip, which are named xcl-plugin-test-... but are not executable,
+    # and the other files extracted from the zip, so the default
+    # xcl-plugin-* pattern starts only the binary
     sidecars = sorted(p.name for p in installed_release.entry.iterdir() if p != installed_release.binary)
     assert sidecars == sorted(
-        [installed_release.archive_name, installed_release.checksums_name, installed_release.signature_name]
+        [installed_release.index_name, installed_release.signature_name, installed_release.zip_name, *ZIP_SIDECARS]
     )
+    if os.name != "nt":
+        executable = [p.name for p in installed_release.entry.iterdir() if p.stat().st_mode & 0o111]
+        assert executable == [installed_release.binary.name]
 
     registry = xcl.LocalRegistry()
     registry.register_plugin_directory(installed_release.entry)

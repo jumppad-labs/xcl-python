@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -89,6 +90,61 @@ def test_local_registry_keeps_registration_order():
     registry.register_type(Database, "database", "postgres")
 
     assert [(r.type, r.subtype) for r in registry.types] == [("app", ""), ("database", "postgres")]
+
+
+def test_local_registry_sends_external_plugin_path_as_one_word_command():
+    registry = LocalRegistry()
+    registry.register_external_plugin("./build/xcl-plugin-notes")
+
+    sent = registry._to_proto().local.external_plugin_commands
+
+    assert [list(plugin.command) for plugin in sent] == [["./build/xcl-plugin-notes"]]
+
+
+def test_local_registry_sends_external_plugin_path_like_as_one_word_command():
+    registry = LocalRegistry()
+    registry.register_external_plugin(Path("build") / "xcl-plugin-notes")
+
+    sent = registry._to_proto().local.external_plugin_commands
+
+    assert [list(plugin.command) for plugin in sent] == [[str(Path("build") / "xcl-plugin-notes")]]
+
+
+def test_local_registry_sends_external_plugin_list_as_program_and_arguments():
+    registry = LocalRegistry()
+    registry.register_external_plugin(["python3", Path("plugins") / "plugin.py", "--verbose"])
+
+    sent = registry._to_proto().local.external_plugin_commands
+
+    assert [list(plugin.command) for plugin in sent] == [["python3", str(Path("plugins") / "plugin.py"), "--verbose"]]
+
+
+def test_local_registry_sends_external_plugin_tuple_as_program_and_arguments():
+    registry = LocalRegistry()
+    registry.register_external_plugin(("go", "run", "./cmd/notes"))
+
+    sent = registry._to_proto().local.external_plugin_commands
+
+    assert [list(plugin.command) for plugin in sent] == [["go", "run", "./cmd/notes"]]
+
+
+def test_local_registry_sends_external_plugins_in_registration_order():
+    registry = LocalRegistry()
+    registry.register_external_plugin("./build/xcl-plugin-notes")
+    registry.register_external_plugin(["python3", "plugin.py"])
+
+    sent = registry._to_proto().local.external_plugin_commands
+
+    assert [list(plugin.command) for plugin in sent] == [["./build/xcl-plugin-notes"], ["python3", "plugin.py"]]
+
+
+def test_local_registry_refuses_empty_external_plugin_command():
+    registry = LocalRegistry()
+
+    with pytest.raises(SchemaError, match="register_external_plugin needs a command"):
+        registry.register_external_plugin([])
+
+    assert list(registry._to_proto().local.external_plugin_commands) == []
 
 
 def test_github_registry_registers_plain_dataclass_by_type():

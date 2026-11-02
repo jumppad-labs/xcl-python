@@ -2,9 +2,10 @@
 
 A fake GitHub release API runs on a local thread, answering the two routes
 the engine reads, the release by tag and each asset by id, from the real
-files of the test plugin release installed once per session. Serving the
-real files unaltered is the positive control; altering the checksums file,
-or trusting a key other than the release key, must be refused with
+files of the test plugin release installed once per session: its index, the
+index's signature and this platform's zip. Serving the real files unaltered
+is the positive control; altering the index or the zip, or trusting a key
+other than the release key, must be refused with
 :class:`xcl.PluginVerificationError` before the plugin is ever started.
 """
 
@@ -128,21 +129,35 @@ class FakeGitHub:
 
 
 def real_assets(installed: ReleaseFiles) -> dict[str, bytes]:
-    """The release's archive, checksums file and signature as installed."""
+    """The release's index, signature and this platform's zip as installed."""
     return {
-        installed.archive_name: installed.archive.read_bytes(),
-        installed.checksums_name: installed.checksums.read_bytes(),
+        installed.index_name: installed.index.read_bytes(),
         installed.signature_name: installed.signature.read_bytes(),
+        installed.zip_name: installed.zip.read_bytes(),
     }
 
 
-def tampered_checksums(installed: ReleaseFiles) -> bytes:
-    """The real checksums file with one hex digit of this platform's archive line changed."""
-    lines = installed.checksums.read_text().splitlines()
-    index = next(i for i, line in enumerate(lines) if line.endswith(installed.archive_name))
-    first = lines[index][0]
-    lines[index] = ("1" if first == "0" else "0") + lines[index][1:]
+def tampered_index(installed: ReleaseFiles) -> bytes:
+    """The real index with the last hex digit of this platform's zip checksum changed.
+
+    The checksum line follows the line naming the zip's asset, inside the
+    platform's block.
+    """
+    lines = installed.index.read_text().splitlines()
+    asset = next(i for i, line in enumerate(lines) if f'"{installed.zip_name}"' in line)
+    line = next(i for i in range(asset + 1, len(lines)) if "checksum" in lines[i])
+    digit = lines[line][-2]
+    assert lines[line].endswith(f'{digit}"'), lines[line]
+    lines[line] = lines[line][:-2] + ("1" if digit == "0" else "0") + '"'
     return ("\n".join(lines) + "\n").encode()
+
+
+def tampered_zip(installed: ReleaseFiles) -> bytes:
+    """The real zip with one byte in its middle changed."""
+    data = bytearray(installed.zip.read_bytes())
+    middle = len(data) // 2
+    data[middle] ^= 0xFF
+    return bytes(data)
 
 
 @pytest.fixture
@@ -182,9 +197,9 @@ def other_key(tmp_path_factory: pytest.TempPathFactory) -> str:
     return export.stdout
 
 
-def test_tampered_release_refused(tmp_path: Path, installed_release: ReleaseFiles, fake_github):
+def test_tampered_index_refused(tmp_path: Path, installed_release: ReleaseFiles, fake_github):
     assets = real_assets(installed_release)
-    assets[installed_release.checksums_name] = tampered_checksums(installed_release)
+    assets[installed_release.index_name] = tampered_index(installed_release)
     fake = fake_github(assets)
     cache_dir = tmp_path / "cache"
     registry = github_registry(cache_dir, trusted_keys=[trusted_key()], api_url=fake.url)
@@ -201,6 +216,33 @@ def test_tampered_release_refused(tmp_path: Path, installed_release: ReleaseFile
     assert raised.value.details["platform"] == f"{goos}/{goarch}"
     assert installed_release.signature_name in str(raised.value)
     assert "does not verify against any trusted key" in str(raised.value)
+    # the release, the index and its signature are read, and the signature
+    # check fails before the zip is downloaded
+    zip_id = list(assets).index(installed_release.zip_name) + 1
+    assert fake.requests[0] == f"/repos/{repository}/releases/tags/{version}"
+    assert len(fake.requests) == 3, fake.requests
+    assert fake.asset_url(zip_id).removeprefix(fake.url) not in fake.requests
+    assert not release_files(cache_dir, repository, version).entry.exists(), "a refused release must not be cached"
+
+
+def test_tampered_zip_refused(tmp_path: Path, installed_release: ReleaseFiles, fake_github):
+    assets = real_assets(installed_release)
+    assets[installed_release.zip_name] = tampered_zip(installed_release)
+    fake = fake_github(assets)
+    cache_dir = tmp_path / "cache"
+    registry = github_registry(cache_dir, trusted_keys=[trusted_key()], api_url=fake.url)
+
+    with xcl.Config(registries=[registry], state_path=tmp_path / "state", variables=log_variables(tmp_path / "ops.jsonl")) as c:
+        with pytest.raises(xcl.PluginVerificationError) as raised:
+            c.validate(TEST_PLUGIN_CONFIG)
+
+    repository, version = plugin_release()
+    goos, goarch = go_platform()
+    assert raised.value.code == "plugin_verification"
+    assert raised.value.details["repository"] == repository
+    assert raised.value.details["version"] == version
+    assert raised.value.details["platform"] == f"{goos}/{goarch}"
+    assert f"zip {installed_release.zip_name} does not match its checksum in the index" in str(raised.value)
     assert fake.requests[0] == f"/repos/{repository}/releases/tags/{version}"
     assert len(fake.requests) == 4, fake.requests
     assert not release_files(cache_dir, repository, version).entry.exists(), "a refused release must not be cached"
@@ -237,8 +279,8 @@ def test_no_trusted_keys_installs_unsigned_release(tmp_path: Path, installed_rel
     repository, version = plugin_release()
     installed = release_files(cache_dir, repository, version)
     assert installed.binary.is_file()
-    assert installed.archive.is_file()
-    assert installed.checksums.is_file()
+    assert installed.index.is_file()
+    assert installed.zip.is_file()
     assert not installed.signature.exists()
     assert fake.requests[0] == f"/repos/{repository}/releases/tags/{version}"
 

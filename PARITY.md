@@ -127,7 +127,7 @@ timestamps and durations.
 | A `Meta` field, `types.Meta` | a `meta` field, an `xcl.Meta \| None` |
 | A plain struct with neither, a singleton | a dataclass with neither, a singleton |
 | `local.RegisterFunction(name, fn)` | `local.register_function(fn, name=None)` |
-| `local.RegisterExternalPlugin(path)` | `local.register_external_plugin(path)` |
+| `local.RegisterExternalPlugin(path)`, `local.RegisterExternalPlugin(program, args...)` | `local.register_external_plugin(path)`, `local.register_external_plugin([program, *args])` |
 | `local.RegisterPluginDirectory(dir)` | `local.register_plugin_directory(dir)` |
 | `registry.NewGitHub(options...)` | `xcl.GitHubRegistry(cache_dir=, trusted_keys=, token=, api_url=)` |
 | `github.RegisterPlugin(repo, version)` | `github.register_plugin(repo, version)` |

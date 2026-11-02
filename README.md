@@ -63,7 +63,7 @@ class Settings:
 
 
 github = xcl.GitHubRegistry(trusted_keys=[RELEASE_KEY])
-github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.3.0")
+github.register_plugin("jumppad-labs/xcl-plugin-docker", "v0.4.1")
 
 local = xcl.LocalRegistry()
 local.register_type(Settings, "settings")
@@ -218,6 +218,25 @@ The result is filled in exactly like a built-in function's, and a result
 computed from a sensitive argument is held as sensitive. A name a builtin or
 another function already uses raises `xcl.FunctionNameClashError` when the
 configuration is created.
+
+### Local plugins
+
+A plugin on this machine is registered on a local registry by its binary's
+path, or as a command: a list holding a program and its arguments. The
+command form runs a plugin from source with no build, such as a plugin
+written in Python, or a Go plugin while you work on it:
+
+```python
+local = xcl.LocalRegistry()
+local.register_external_plugin("./build/xcl-plugin-notes")    # a plugin binary
+local.register_external_plugin(["python3", "plugin.py"])      # a program and its arguments
+local.register_external_plugin(["go", "run", "./cmd/notes"])  # a Go plugin from source
+local.register_plugin_directory("./plugins")                  # every xcl-plugin-* binary in a directory
+```
+
+A plugin started with arguments is named by its full command line, and one
+started from a path by its binary's name. A path or argument may be a
+`pathlib.Path`; an empty list raises `xcl.SchemaError`.
 
 ### Variables, state and events
 
@@ -708,7 +727,9 @@ with its file, line and column, a `message` saying what is wrong and why, and,
 from an engine that reports them, its `detail` on its own and the `entity` and
 `field` it is in), `xcl.PluginVerificationError`,
 `xcl.FunctionNameClashError`, `xcl.CancelledError` and so on. A plugin
-release whose signature does not verify against the trusted keys is refused.
+release is refused with `xcl.PluginVerificationError` when the signature over
+its index does not verify against the trusted keys, or when its zip does not
+match the checksum the index gives for it.
 An error holding configuration problems also carries their report, shown on
 tracebacks and logged exceptions and printed by `xcl.print_error`; see
 [Printing errors](#printing-errors). `xcl.InvalidStyleError` and
