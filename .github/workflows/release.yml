@@ -15,8 +15,13 @@
 # published package is then installed on every platform with no Go or C
 # compiler on the path, where .github/scripts/install_check.py applies a
 # configuration, reads the entity back and checks the engine reports the pin.
-# Last, a GitHub release is created for the tag, its notes listing the pull
-# requests merged since the previous tag and naming the bundled engine.
+# A separate job generates the package's API reference for the tag with
+# .github/scripts/api_reference.py, which also checks every public name has a
+# doc comment, so a package that fails it never reaches PyPI. Last, a GitHub
+# release is created for the tag, its notes listing the pull requests merged
+# since the previous tag and naming the bundled engine, the reference data is
+# attached to it, and xcl-website is told about the tag, so the reference on
+# xcl.dev follows the release.
 
 name: Release
 
@@ -280,9 +285,35 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+  # the API as the data xcl.dev renders; anything wrong with the package's doc
+  # comments fails here, before publish, which needs this job
+  reference:
+    name: API reference
+    needs: settings
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.settings.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.settings.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Set the version from the tag
+        run: sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$VERSION\"/" xcl/_version.py
+      - run: python -m pip install -r .github/scripts/requirements-docs.txt
+      - name: Generate the reference
+        run: python .github/scripts/api_reference.py --check --out "xcl-lang-$VERSION-reference.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reference
+          path: xcl-lang-*-reference.json
+          if-no-files-found: error
+
   publish:
     name: Publish to PyPI
-    needs: [settings, wheels, wheels-musl, sdist]
+    needs: [settings, wheels, wheels-musl, sdist, reference]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -380,10 +411,10 @@ jobs:
             python .github/scripts/install_check.py'
 
   # the GitHub release for the tag: the pull requests merged since the
-  # previous tag, and the engine the package bundles
+  # previous tag, the engine the package bundles, and the reference data
   github-release:
     name: GitHub release
-    needs: [settings, publish]
+    needs: [settings, publish, reference]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -405,3 +436,31 @@ jobs:
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" \
             --notes "Bundles the xcl engine [$ENGINE](https://github.com/jumppad-labs/xcl/releases/tag/$ENGINE)." \
             --generate-notes "${start[@]}"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: reference
+
+      - name: Attach the reference data
+        run: gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" xcl-lang-*-reference.json
+
+  # tell the website the release exists, once the data it fetches is attached
+  dispatch-website:
+    name: Dispatch the website
+    needs: [settings, github-release]
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.settings.outputs.tag }}
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: xcl-website
+
+      - name: Dispatch xcl-website
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: gh api repos/jumppad-labs/xcl-website/dispatches -f event_type=xcl-python-release -f 'client_payload[tag]='"$TAG"

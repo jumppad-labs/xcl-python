@@ -47,6 +47,9 @@ def logging_handler(logger: logging.Logger | None = None) -> Callable[[Event], N
     ``record.xcl_event.meta``. JSON and key-value formatters, structlog's
     ``ProcessorFormatter`` and loguru's standard logging integration see the
     attributes as fields, with no adapter.
+
+    :param logger: the logger to write to, ``logging.getLogger("xcl")`` when not given
+    :returns: a handler to pass as ``on_event``
     """
     target = logging.getLogger("xcl") if logger is None else logger
 

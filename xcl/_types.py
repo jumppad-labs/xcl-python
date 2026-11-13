@@ -89,6 +89,7 @@ class _Unknown:
 
 
 UNKNOWN = _Unknown()
+"""The value of a setting only known once the apply has run; it is false in a boolean test."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -122,6 +123,13 @@ def field(
     a block's element, a map of blocks fills it from the key and a list of
     blocks when the block is written with a label. ``default`` and
     ``default_factory`` are the dataclass's.
+
+    :param name: the name configuration uses, when it differs from the attribute's
+    :param block: ``True`` for a nested block, ``False`` for an attribute holding an object value
+    :param label: ``True`` when the field holds a block's label
+    :param default: the dataclass field's default
+    :param default_factory: the dataclass field's default factory
+    :returns: the dataclass field
     """
     options = FieldOptions(name=name, block=block, label=label)
     if default is not dataclasses.MISSING:

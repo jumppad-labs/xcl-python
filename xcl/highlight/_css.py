@@ -21,6 +21,9 @@ def css(theme: Theme) -> str:
     own style does not, since a kind's style replaces its category's whole::
 
         Path("xcl.css").write_text(css(DEFAULT_THEME | {Kind.ATTRIBUTE: "#ff8800"}))
+
+    :param theme: the theme to write as CSS
+    :returns: the stylesheet
     """
     styles = _styles(theme)
     rules: list[str] = []

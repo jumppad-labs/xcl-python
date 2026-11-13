@@ -32,6 +32,8 @@ class LocalRegistry:
 
     ``plugin_pattern`` names the files a plugin directory is searched for,
     such as ``xcl-plugin-*``; left out, the engine's default applies.
+
+    :param plugin_pattern: the file name pattern a plugin directory is searched for, the engine's default when not given
     """
 
     def __init__(self, *, plugin_pattern: Optional[str] = None) -> None:
@@ -59,6 +61,11 @@ class LocalRegistry:
         that is not itself a dataclass, an empty
         type name, or an annotation with no configuration form raises
         :class:`SchemaError` naming the class or field.
+
+        :param cls: the dataclass to declare
+        :param type: the block's type name, the first part of its address
+        :param subtype: the block's subtype, when the type has them
+        :raises xcl.SchemaError: for a class that is not a dataclass, an empty type name, or an annotation with no configuration form
         """
         self._types.append(_registration(cls, type, subtype))
 
@@ -70,6 +77,10 @@ class LocalRegistry:
         ``float`` parameters and result, and lists and dicts of those. A name
         a builtin or another function already uses is reported when the
         configuration is created.
+
+        :param fn: the function to offer, annotated with its parameter and result types
+        :param name: the name configuration calls it by, its own name by default
+        :raises xcl.SchemaError: for a function with no name, a name already registered here, or an annotation with no configuration form
         """
         function_name = name or getattr(fn, "__name__", None)
         if not function_name:
@@ -89,6 +100,9 @@ class LocalRegistry:
         no build. A plugin started with arguments is named by its full
         command line, and one started from a path by its binary's name. An
         empty list raises :class:`SchemaError`.
+
+        :param command: the path of a plugin binary, or a list holding a program and its arguments
+        :raises xcl.SchemaError: for an empty list
         """
         if isinstance(command, (str, os.PathLike)):
             self._external_plugins.append([os.fspath(command)])
@@ -102,7 +116,10 @@ class LocalRegistry:
         self._external_plugins.append(words)
 
     def register_plugin_directory(self, path: str | os.PathLike[str]) -> None:
-        """Use every plugin binary found in the directory at ``path``."""
+        """Use every plugin binary found in the directory at ``path``.
+
+        :param path: the directory to search for plugin binaries
+        """
         self._plugin_directories.append(os.fspath(path))
 
     @property
@@ -137,6 +154,11 @@ class GitHubRegistry:
     ``token`` a GitHub token for private repositories or a higher rate limit,
     and ``api_url`` the API to read releases from, for a GitHub Enterprise
     host or a test server.
+
+    :param cache_dir: where releases are installed
+    :param trusted_keys: the armoured public keys a release's signature must verify against
+    :param token: a GitHub token, for private repositories or a higher rate limit
+    :param api_url: the API to read releases from, for a GitHub Enterprise host or a test server
     """
 
     def __init__(
@@ -155,13 +177,24 @@ class GitHubRegistry:
         self._types: list[Registration] = []
 
     def register_plugin(self, repository: str, version: str) -> None:
-        """Use the plugin released by ``repository`` (``owner/repo``) at ``version`` (``vX.Y.Z``)."""
+        """Use the plugin released by ``repository`` (``owner/repo``) at ``version`` (``vX.Y.Z``).
+
+        :param repository: the plugin's repository, as ``owner/repo``
+        :param version: the release to use, as ``vX.Y.Z``
+        :raises ValueError: when either is empty
+        """
         if not repository or not version:
             raise ValueError("a GitHub plugin needs a repository and a version")
         self._plugins.append((repository, version))
 
     def register_type(self, cls: type, type: str, subtype: Optional[str] = None) -> None:  # noqa: A002 - mirrors the Go name
-        """Declare the dataclass ``cls`` as a block type on this registry, as :meth:`LocalRegistry.register_type` does."""
+        """Declare the dataclass ``cls`` as a block type on this registry, as :meth:`LocalRegistry.register_type` does.
+
+        :param cls: the dataclass to declare
+        :param type: the block's type name, the first part of its address
+        :param subtype: the block's subtype, when the type has them
+        :raises xcl.SchemaError: for a class that is not a dataclass, an empty type name, or an annotation with no configuration form
+        """
         self._types.append(_registration(cls, type, subtype))
 
     @property

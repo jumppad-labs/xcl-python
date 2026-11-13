@@ -43,6 +43,12 @@ def print_error(
         except xcl.Error as err:
             xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
             sys.exit(1)
+
+    :param err: the exception to print
+    :param file: the stream to write to, ``sys.stderr`` when not given
+    :param formatter: the format to write in, plain text by default
+    :param theme: the colours to style the text with
+    :param width: the column to wrap at; ``0`` or ``None`` never wraps
     """
     out = sys.stderr if file is None else file
     tokens = _tokens_of(err)
@@ -63,6 +69,12 @@ def format_error(
 
     The HTML formats return markup already escaped, ready to put into a
     page.
+
+    :param err: the exception to format
+    :param formatter: the format to write in, plain text by default
+    :param theme: the colours to style the text with
+    :param width: the column to wrap at; ``0`` or ``None`` never wraps
+    :returns: the text :func:`print_error` writes
     """
     tokens = _tokens_of(err)
     if not tokens:
@@ -89,6 +101,12 @@ def print_diff(
 
     Raises ``ValueError`` for a diff that carries no labelled text, such as
     one built by hand: only a diff returned by ``Config.diff`` carries it.
+
+    :param diff: a diff returned by :meth:`xcl.Config.diff`
+    :param file: the stream to write to, ``sys.stdout`` when not given
+    :param formatter: the format to write in, plain text by default
+    :param theme: the colours to style the text with
+    :raises ValueError: for a diff that carries no labelled text
     """
     if not diff.tokens:
         raise ValueError("this diff has no labelled text to print: only a diff returned by Config.diff carries it")

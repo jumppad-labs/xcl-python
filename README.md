@@ -10,7 +10,7 @@ configuration.
 
 - Engine and Go library: [github.com/jumppad-labs/xcl](https://github.com/jumppad-labs/xcl)
 - Language and documentation: [xcl.dev](https://xcl.dev)
-- Python API reference: [xcl.dev/api/python](https://xcl.dev/api/python/)
+- Python API reference: [xcl.dev/reference/python](https://xcl.dev/reference/python/)
 - Getting started guide: [Using XCL with Python](https://xcl.dev/using-xcl-with-python/)
 
 ## Install
@@ -802,7 +802,10 @@ pull request carries exactly one of the labels `patch`, `minor`, `major` or
 `no-release`, and merging it tags and publishes the next version of this
 package to PyPI, with a GitHub release listing the merged pull requests and
 naming the bundled engine. The package's version line is its own: a fix here
-releases Python alone, with no xcl release.
+releases Python alone, with no xcl release. A release also attaches the
+package's API reference, generated from its doc comments, to the GitHub
+release, and the [Python reference](https://xcl.dev/reference/python/) on
+xcl.dev moves to it once the site has built with it.
 
 `xcl-ref.txt` pins the xcl release the package is tested against, built
 against and bundles. When xcl releases, a pull request titled "Use xcl engine
