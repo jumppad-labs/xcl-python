@@ -89,6 +89,9 @@ def parse_style(style: str) -> Style:
     ``bg:#rrggbb``. A later word for the same thing wins. A word that is none
     of these is skipped: parsing never fails, and :func:`validate` reports
     the words skipped.
+
+    :param style: the style string
+    :returns: the style it describes
     """
     fields: dict[str, object] = {}
     for word in style.split():
@@ -102,7 +105,11 @@ def _unknown_words(style: str) -> list[str]:
 
 
 def hex_colour(colour: str) -> str:
-    """A colour as ``"#rrggbb"``: a named colour through the fixed palette, a hex colour as it is, ``""`` for none."""
+    """A colour as ``"#rrggbb"``: a named colour through the fixed palette, a hex colour as it is, ``""`` for none.
+
+    :param colour: a named colour, a hex colour or ``""``
+    :returns: the colour as ``"#rrggbb"``, or ``""``
+    """
     named = _NAMED_COLOURS.get(colour)
     if named is not None:
         return named[1]

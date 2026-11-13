@@ -179,10 +179,15 @@ class _SVG:
 
 
 PLAIN: Formatter = _Plain()
+"""The tokens' text with nothing added, ignoring the theme."""
 TERMINAL: Formatter = _Terminal()
+"""ANSI terminal colour, styled by the theme."""
 HTML: Formatter = _HTML()
+"""An HTML ``pre`` element with a class for each kind, to style with :func:`css`."""
 HTML_INLINE: Formatter = _HTMLInline()
+"""HTML with the theme's styles written inline, for a page without the stylesheet."""
 SVG: Formatter = _SVG()
+"""An SVG image of the text, styled by the theme."""
 
 
 def _write(out: TextIO, text: str) -> None:

@@ -18,6 +18,9 @@ def for_stream(stream: object) -> Formatter:
     usual choice::
 
         xcl.print_error(err, formatter=xcl.highlight.for_stream(sys.stderr))
+
+    :param stream: the stream to be written to
+    :returns: the format to use
     """
     isatty = getattr(stream, "isatty", None)
     if isatty is None:

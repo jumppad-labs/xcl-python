@@ -53,6 +53,10 @@ def style_for(theme: Theme, kind: int) -> Style:
 
     A style is taken whole, never merged with its category's, and words a
     style does not understand are skipped.
+
+    :param theme: the theme to look in
+    :param kind: the kind number
+    :returns: the style
     """
     styles = _styles(theme)
     written = styles.get(kind, "")
@@ -72,6 +76,9 @@ def validate(theme: Theme) -> None:
     understand otherwise, in the order of the kinds and then of the words.
     Printing with a theme that does not validate still works: the words are
     skipped.
+
+    :param theme: the theme to check
+    :raises xcl.InvalidStyleError: naming every word a style does not understand
     """
     from xcl._errors import InvalidStyleError
 

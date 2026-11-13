@@ -62,6 +62,22 @@ class Config:
     runs to completion before returning and keeps other Python threads
     running meanwhile. ``close`` releases the configuration, and a ``Config``
     is a context manager that closes on exit.
+
+    :param registries: the registries whose types, functions and plugins the configuration may use
+    :param state_path: the directory to keep state in; give this or ``state_store``, not both
+    :param state_store: an object with ``load``, ``save``, ``exists`` and ``clear`` to keep state in
+    :param state_mask: the mask for sensitive values in state
+    :param variables: values for the configuration's variables, by name
+    :param on_event: called with every :class:`xcl.Event`
+    :param event_data: what resource data lifecycle events carry
+    :param event_buffer_size: how many events may wait for the handler
+    :param event_mask: the mask for sensitive values in event data, redacted by default
+    :param no_event_mask: leave sensitive values in event data unmasked
+    :param client: the engine client to use, the shared one when not given
+    :raises ValueError: when both ``state_path`` and ``state_store`` are given
+    :raises TypeError: for an ``event_data`` that is not an :class:`xcl.EventDataLevel`
+    :raises xcl.EngineNotFoundError: when the engine cannot be found on first use
+    :raises xcl.EngineVersionError: when the engine's version differs from the one the package was built for
     """
 
     def __init__(
@@ -173,64 +189,137 @@ class Config:
         return drive(op, self._handlers)
 
     def validate(self, *paths: str | os.PathLike[str]) -> None:
-        """Check the configuration at ``paths`` is valid, calling no provider; raises :class:`xcl.ConfigError`."""
+        """Check the configuration at ``paths`` is valid, calling no provider; raises :class:`xcl.ConfigError`.
+
+        :param paths: the files and directories holding the configuration
+        :raises xcl.ConfigError: when the configuration is not valid
+        :raises xcl.InvalidArgumentError: when no path is given
+        :raises RuntimeError: when the configuration has been closed
+        """
         self._run("StartValidate", core_pb2.StartValidateRequest(paths=_paths(paths)))
 
     def apply(self, *paths: str | os.PathLike[str]) -> None:
-        """Apply the configuration at ``paths``: create, update and destroy entities, then save state."""
+        """Apply the configuration at ``paths``: create, update and destroy entities, then save state.
+
+        :param paths: the files and directories holding the configuration
+        :raises xcl.ConfigError: when the configuration is not valid
+        :raises xcl.InvalidArgumentError: when no path is given
+        :raises xcl.ProviderError: when a provider fails during a lifecycle step
+        :raises RuntimeError: when the configuration has been closed
+        """
         self._run("StartApply", core_pb2.StartApplyRequest(paths=_paths(paths)))
 
     def diff(self, *paths: str | os.PathLike[str], reveal_sensitive: bool = False) -> Diff:
-        """What applying the configuration at ``paths`` would do, without doing it."""
+        """What applying the configuration at ``paths`` would do, without doing it.
+
+        :param paths: the files and directories holding the configuration
+        :param reveal_sensitive: show sensitive values rather than ``(sensitive)``
+        :returns: the changes an apply would make
+        :raises xcl.ConfigError: when the configuration is not valid
+        :raises xcl.InvalidArgumentError: when no path is given
+        :raises RuntimeError: when the configuration has been closed
+        """
         result = self._run("StartDiff", core_pb2.StartDiffRequest(paths=_paths(paths), reveal_sensitive=reveal_sensitive))
         assert result is not None
         return result
 
     def destroy(self) -> None:
-        """Destroy every entity in the saved state, children first, saving after each."""
+        """Destroy every entity in the saved state, children first, saving after each.
+
+        :raises xcl.ProviderError: when a provider fails during a lifecycle step
+        :raises RuntimeError: when the configuration has been closed
+        """
         self._run("StartDestroy", core_pb2.StartDestroyRequest())
 
     def load(self) -> None:
-        """Read the saved state into the configuration, so lookups answer from it."""
+        """Read the saved state into the configuration, so lookups answer from it.
+
+        :raises xcl.UnrecoverableError: when a masked value in state cannot be recovered with the mask configured
+        :raises RuntimeError: when the configuration has been closed
+        """
         self._run("StartLoad", core_pb2.StartLoadRequest())
 
     # -- lookups -----------------------------------------------------------
 
     def entities(self) -> list[Any]:
-        """Every entity the configuration holds, as the classes registered on it or :class:`xcl.Entity`."""
+        """Every entity the configuration holds, as the classes registered on it or :class:`xcl.Entity`.
+
+        :returns: every entity, in the classes registered on this configuration or as :class:`xcl.Entity`
+        :raises RuntimeError: when the configuration has been closed
+        """
         response = self._client.call(self._open(), "Entities", core_pb2.EntitiesRequest())
         return [hydrate(json.loads(e), registry=self._classes) for e in response.entities]
 
     def entity_count(self) -> int:
-        """How many entities the configuration holds."""
+        """How many entities the configuration holds.
+
+        :returns: the number of entities
+        :raises RuntimeError: when the configuration has been closed
+        """
         return len(self._client.call(self._open(), "Entities", core_pb2.EntitiesRequest()).entities)
 
     def find(self, cls: Optional[type], address: str) -> Any:
         """The entity at ``address``, as ``cls``, or as the class registered on this configuration or :class:`xcl.Entity` when ``cls`` is ``None``.
 
         A ``cls`` this configuration did not register raises :class:`xcl.NotRegisteredError`.
+
+        :param cls: the class to return the entities as, one registered on this configuration, or ``None`` for the registered class or :class:`xcl.Entity`
+        :param address: the entity's address, such as ``app.web``
+        :returns: the entity
+        :raises xcl.NotFoundError: when no entity exists at ``address``
+        :raises xcl.NotRegisteredError: when this configuration did not register ``cls``
+        :raises xcl.TypeMismatchError: when an entity found is not of the type ``cls`` is registered as
+        :raises RuntimeError: when the configuration has been closed
         """
         response = self._client.call(self._open(), "Find", core_pb2.FindRequest(address=address))
         return self._hydrate(response.entity, cls)
 
     def find_by_type(self, cls: Optional[type], *path: str) -> list[Any]:
-        """Every entity of the type the segments name, as :meth:`find` returns them."""
+        """Every entity of the type the segments name, as :meth:`find` returns them.
+
+        :param cls: the class to return the entities as, one registered on this configuration, or ``None`` for the registered class or :class:`xcl.Entity`
+        :param path: the type's segments, such as ``"database", "postgres"``
+        :returns: every entity of the type, an empty list when there are none
+        :raises xcl.NotRegisteredError: when this configuration did not register ``cls``
+        :raises xcl.TypeMismatchError: when an entity found is not of the type ``cls`` is registered as
+        :raises RuntimeError: when the configuration has been closed
+        """
         response = self._client.call(self._open(), "FindByType", core_pb2.FindByTypeRequest(path=list(path)))
         return [self._hydrate(e, cls) for e in response.entities]
 
     def find_one(self, cls: Optional[type], *path: str) -> Any:
-        """The single entity of the type the segments name; raises :class:`xcl.NotFoundError` or :class:`xcl.NotUniqueError`."""
+        """The single entity of the type the segments name; raises :class:`xcl.NotFoundError` or :class:`xcl.NotUniqueError`.
+
+        :param cls: the class to return the entities as, one registered on this configuration, or ``None`` for the registered class or :class:`xcl.Entity`
+        :param path: the type's segments, such as ``"database", "postgres"``
+        :returns: the entity
+        :raises xcl.NotFoundError: when no entity has the type
+        :raises xcl.NotUniqueError: when more than one does
+        :raises xcl.NotRegisteredError: when this configuration did not register ``cls``
+        :raises xcl.TypeMismatchError: when an entity found is not of the type ``cls`` is registered as
+        :raises RuntimeError: when the configuration has been closed
+        """
         response = self._client.call(self._open(), "FindOne", core_pb2.FindByTypeRequest(path=list(path)))
         return self._hydrate(response.entity, cls)
 
     def all(self, cls: type) -> list[Any]:
-        """Every entity of ``cls``, a class registered on this configuration."""
+        """Every entity of ``cls``, a class registered on this configuration.
+
+        :param cls: a class registered on this configuration
+        :returns: every entity of the class
+        :raises xcl.NotRegisteredError: when this configuration did not register ``cls``
+        :raises RuntimeError: when the configuration has been closed
+        """
         type_name, subtype = self._classes.names_of(cls)
         path = [type_name, subtype] if subtype else [type_name]
         return self.find_by_type(cls, *path)
 
     def outputs(self) -> dict[str, Any]:
-        """The configuration's outputs, by address, as Python values."""
+        """The configuration's outputs, by address, as Python values.
+
+        :returns: the output values, by address
+        :raises RuntimeError: when the configuration has been closed
+        """
         response = self._client.call(self._open(), "Outputs", core_pb2.OutputsRequest())
         return json.loads(response.outputs_json) if response.outputs_json else {}
 
@@ -271,6 +360,17 @@ class Config:
         including from an ``on_event`` handler, because it reads the
         engine's own copy of the entity. To render from an event handler,
         use ``encode_saved_entity(event.data)``, which is allowed then.
+
+        :param entity: an instance of a registered class, or the :class:`xcl.Entity` a lookup returned
+        :param include_computed: also write the fields a provider filled in
+        :param include_empty: also write attributes that are unset or at their zero value
+        :param reveal_sensitive: write each sensitive value as its real value rather than ``(sensitive)``
+        :param show_references: write each field that referred to another entity as the configuration wrote it
+        :returns: the entity as configuration text
+        :raises xcl.NotEncodableError: for a value that is not an entity, or that has no configuration form
+        :raises xcl.NotRegisteredError: for an instance of a class this configuration did not register
+        :raises xcl.OperationInProgressError: while an operation runs, including from an ``on_event`` handler
+        :raises RuntimeError: when the configuration has been closed
         """
         request = _encode_entity_request(
             record_bytes(entity, self._classes),
@@ -297,6 +397,17 @@ class Config:
         for a format of your own. It raises what :meth:`encode_entity`
         raises, including :class:`xcl.OperationInProgressError` while an
         operation runs.
+
+        :param entity: an instance of a registered class, or the :class:`xcl.Entity` a lookup returned
+        :param include_computed: also write the fields a provider filled in
+        :param include_empty: also write attributes that are unset or at their zero value
+        :param reveal_sensitive: write each sensitive value as its real value rather than ``(sensitive)``
+        :param show_references: write each field that referred to another entity as the configuration wrote it
+        :returns: the labelled pieces of the text, in order
+        :raises xcl.NotEncodableError: for a value that is not an entity, or that has no configuration form
+        :raises xcl.NotRegisteredError: for an instance of a class this configuration did not register
+        :raises xcl.OperationInProgressError: while an operation runs, including from an ``on_event`` handler
+        :raises RuntimeError: when the configuration has been closed
         """
         request = _encode_entity_request(
             record_bytes(entity, self._classes),
@@ -330,6 +441,19 @@ class Config:
         It raises what :meth:`encode_entity` raises, writing nothing; to
         print from an event handler while an operation runs, use
         :meth:`print_saved_entity`.
+
+        :param entity: an instance of a registered class, or the :class:`xcl.Entity` a lookup returned
+        :param file: the stream to write to, ``sys.stdout`` when not given
+        :param include_computed: also write the fields a provider filled in
+        :param include_empty: also write attributes that are unset or at their zero value
+        :param reveal_sensitive: write each sensitive value as its real value rather than ``(sensitive)``
+        :param show_references: write each field that referred to another entity as the configuration wrote it
+        :param formatter: the format to write in, plain text by default
+        :param theme: the colours to style the text with
+        :raises xcl.NotEncodableError: for a value that is not an entity, or that has no configuration form
+        :raises xcl.NotRegisteredError: for an instance of a class this configuration did not register
+        :raises xcl.OperationInProgressError: while an operation runs, including from an ``on_event`` handler
+        :raises RuntimeError: when the configuration has been closed
         """
         tokens = self.entity_tokens(
             entity,
@@ -372,6 +496,18 @@ class Config:
         type this configuration does not know, :class:`xcl.NotEncodableError`
         for a variable, output or module, and :class:`xcl.PluginLoadError`
         when a plugin the record needs fails to load.
+
+        :param data: one saved record, as state stores it and events carry it
+        :param include_computed: also write the fields a provider filled in
+        :param include_empty: also write attributes that are unset or at their zero value
+        :param reveal_sensitive: write each sensitive value as its real value rather than ``(sensitive)``
+        :param show_references: write each field that referred to another entity as the configuration wrote it
+        :returns: the record as configuration text
+        :raises xcl.InvalidSavedDataError: for data that is not one saved record
+        :raises xcl.UnregisteredTypeError: for a record of a type this configuration does not know
+        :raises xcl.NotEncodableError: for a variable, output or module
+        :raises xcl.PluginLoadError: when a plugin the record needs fails to load
+        :raises RuntimeError: when the configuration has been closed
         """
         request = _encode_saved_entity_request(
             data,
@@ -397,6 +533,18 @@ class Config:
         labelled with its :class:`xcl.highlight.Kind`. Like
         :meth:`encode_saved_entity`, it can be called from an ``on_event``
         handler while an operation runs, and raises what it raises.
+
+        :param data: one saved record, as state stores it and events carry it
+        :param include_computed: also write the fields a provider filled in
+        :param include_empty: also write attributes that are unset or at their zero value
+        :param reveal_sensitive: write each sensitive value as its real value rather than ``(sensitive)``
+        :param show_references: write each field that referred to another entity as the configuration wrote it
+        :returns: the labelled pieces of the text, in order
+        :raises xcl.InvalidSavedDataError: for data that is not one saved record
+        :raises xcl.UnregisteredTypeError: for a record of a type this configuration does not know
+        :raises xcl.NotEncodableError: for a variable, output or module
+        :raises xcl.PluginLoadError: when a plugin the record needs fails to load
+        :raises RuntimeError: when the configuration has been closed
         """
         return self._saved_entity_tokens_now(
             data,
@@ -455,6 +603,20 @@ class Config:
                     cfg.print_saved_entity(event.data, include_computed=True)
 
         It raises what :meth:`encode_saved_entity` raises, writing nothing.
+
+        :param data: one saved record, as state stores it and events carry it
+        :param file: the stream to write to, ``sys.stdout`` when not given
+        :param include_computed: also write the fields a provider filled in
+        :param include_empty: also write attributes that are unset or at their zero value
+        :param reveal_sensitive: write each sensitive value as its real value rather than ``(sensitive)``
+        :param show_references: write each field that referred to another entity as the configuration wrote it
+        :param formatter: the format to write in, plain text by default
+        :param theme: the colours to style the text with
+        :raises xcl.InvalidSavedDataError: for data that is not one saved record
+        :raises xcl.UnregisteredTypeError: for a record of a type this configuration does not know
+        :raises xcl.NotEncodableError: for a variable, output or module
+        :raises xcl.PluginLoadError: when a plugin the record needs fails to load
+        :raises RuntimeError: when the configuration has been closed
         """
         tokens = self.saved_entity_tokens(
             data,

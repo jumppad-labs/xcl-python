@@ -101,7 +101,11 @@ class Kind(enum.IntEnum):
 
 
 def parent_of(kind: int) -> int:
-    """The category of any kind number, known or not: ``kind // 100 * 100``."""
+    """The category of any kind number, known or not: ``kind // 100 * 100``.
+
+    :param kind: a kind number
+    :returns: the number of its category
+    """
     return int(kind) // 100 * 100
 
 
@@ -114,7 +118,11 @@ def _known(kind: int) -> Kind | None:
 
 
 def css_class_of(kind: int) -> str:
-    """The HTML class of any kind number: a known kind's own, else its known category's, else ``""``."""
+    """The HTML class of any kind number: a known kind's own, else its known category's, else ``""``.
+
+    :param kind: a kind number
+    :returns: the HTML class, or ``""``
+    """
     known = _known(kind)
     if known is not None:
         return known.css_class

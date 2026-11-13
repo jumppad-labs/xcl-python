@@ -129,7 +129,12 @@ __all__ = [
 
 
 def engine_version() -> str:
-    """The version the bundled engine reports, loading it if it is not loaded yet."""
+    """The version the bundled engine reports, loading it if it is not loaded yet.
+
+    :returns: the engine's version
+    :raises xcl.EngineNotFoundError: when the engine cannot be found on first use
+    :raises xcl.EngineVersionError: when the engine's version differs from the one the package was built for
+    """
     from xcl._client import default_client
 
     return default_client().engine_version()
