@@ -124,9 +124,14 @@ def apply_with(tmp_path: Path, plugin: Path, config: Path, on_event, *, state: s
 
 
 def normalised(text: str) -> str:
-    """``text`` with the time of each line and every duration replaced, the parts that differ between runs."""
+    """``text`` with the time of each line replaced and every duration left out, the parts that differ between runs.
+
+    A duration is left out rather than replaced because a zero duration is not
+    written at all, and an operation faster than the clock's resolution (about
+    15 ms on Windows) can measure zero in one run and not the other.
+    """
     text = re.sub(r"^\d{1,2}:\d{2}(AM|PM) ", "<time> ", text, flags=re.MULTILINE)
-    return re.sub(r"duration=\S+", "duration=<duration>", text)
+    return re.sub(r" duration=\S+", "", text)
 
 
 def event_lines(text: str) -> list[str]:
