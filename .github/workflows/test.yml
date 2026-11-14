@@ -11,6 +11,14 @@
 #
 #   python-ref  the xcl-python ref to test (default main)
 #   xcl-ref     the xcl ref to build the engine from (default: xcl-ref.txt)
+#   scope       full (default) or smoke
+#
+# The smoke scope is for xcl's bindings check, which asks whether an engine
+# change breaks Python, not whether the package builds and installs: the test
+# job runs on one runner per operating system (ubuntu-latest, macos-latest,
+# windows-latest) and one CPython, 3.13, and the musl, package and doc comment
+# jobs are skipped. The engine's behaviour differs by operating system, not by
+# CPython version. Any value other than smoke runs the full suite.
 #
 # A called workflow checks out its caller by default, so every checkout here
 # names its repository. The final job, result, is the one check to require:
@@ -47,6 +55,11 @@ on:
         required: false
         type: string
         default: ''
+      scope:
+        description: full runs every platform and CPython; smoke runs one runner per operating system on one CPython
+        required: false
+        type: string
+        default: full
 
 env:
   GO_VERSION: '1.27.0'
@@ -58,8 +71,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
-        python: ['3.11', '3.12', '3.13', '3.x']
+        os: ${{ fromJSON(inputs.scope == 'smoke' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "windows-latest", "windows-11-arm"]') }}
+        python: ${{ fromJSON(inputs.scope == 'smoke' && '["3.13"]' || '["3.11", "3.12", "3.13", "3.x"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,6 +152,7 @@ jobs:
   # its JavaScript actions in an Alpine job container on the arm64 runners.
   test-musl:
     name: alpine / ${{ matrix.arch }}
+    if: inputs.scope != 'smoke'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -192,6 +206,7 @@ jobs:
   # the package metadata must be acceptable to PyPI
   check-package:
     name: Check the package
+    if: inputs.scope != 'smoke'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -210,6 +225,7 @@ jobs:
   # see a constant's doc comment
   check-docs:
     name: Check the doc comments
+    if: inputs.scope != 'smoke'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -224,7 +240,8 @@ jobs:
       - run: python -m pytest .github/scripts
 
   # the one check to require: it fails unless every job above succeeded, and
-  # always runs, so a skipped or cancelled job can never pass for a success
+  # always runs, so a skipped or cancelled job can never pass for a success.
+  # In the smoke scope only the test job runs, and only its result counts.
   result:
     name: result
     needs: [test, test-musl, check-package, check-docs]
@@ -233,8 +250,18 @@ jobs:
     steps:
       - name: Check every job succeeded
         env:
+          SCOPE: ${{ inputs.scope }}
+          TEST: ${{ needs.test.result }}
           RESULTS: ${{ toJSON(needs.*.result) }}
         run: |
+          if [ "$SCOPE" = smoke ]; then
+            echo "smoke scope, test job result: $TEST"
+            if [ "$TEST" != success ]; then
+              echo "the test suite did not pass"
+              exit 1
+            fi
+            exit 0
+          fi
           echo "job results: $RESULTS"
           if [ "$(jq -r 'map(select(. != "success")) | length' <<< "$RESULTS")" != 0 ]; then
             echo "the test suite did not pass"
