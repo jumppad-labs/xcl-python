@@ -1,0 +1,10 @@
+# Installed only by the check-docs job of test.yml and the reference job of
+# release.yml, to run api_reference.py; neither is a dependency of xcl-lang.
+#
+# griffe reads the package statically, so the doc comment check needs no
+# engine and can see the doc comment following a constant, which runtime
+# introspection cannot.
+griffe==2.4.1
+# docutils turns the package's reStructuredText doc comments into the HTML
+# the reference shows, and fails the check on bad markup.
+docutils==0.23

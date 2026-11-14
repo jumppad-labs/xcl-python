@@ -53,4 +53,11 @@ test:
 test-unit:
 	$(PYTHON) -m pytest tests/unit
 
-.PHONY: protos engine libxcl plugins test test-unit
+# check-docs fails on a public name or member with no doc comment, as the
+# check-docs job of test.yml does; it needs the packages in
+# .github/scripts/requirements-docs.txt
+check-docs:
+	$(PYTHON) .github/scripts/api_reference.py --check
+	$(PYTHON) -m pytest .github/scripts
+
+.PHONY: protos engine libxcl plugins test test-unit check-docs

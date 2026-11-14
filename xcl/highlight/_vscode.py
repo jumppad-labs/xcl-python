@@ -23,6 +23,11 @@ def load_vscode_theme(source: str | os.PathLike[str] | bytes) -> dict[int, str]:
     when a configuration is created. A theme the engine cannot use raises
     :class:`xcl.InvalidThemeError`, whose ``details["reason"]`` says what was
     wrong and where.
+
+    :param source: the theme file's path, or its contents as bytes
+    :returns: the theme, holding only the kinds the VS Code theme styles
+    :raises xcl.InvalidThemeError: for a theme the engine cannot use
+    :raises OSError: when the file at ``source`` cannot be read
     """
     from xcl._client import default_client
     from xcl._core import core_pb2

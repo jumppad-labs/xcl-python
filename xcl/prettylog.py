@@ -74,6 +74,8 @@ def level_from_env() -> int:
     ``debug``, ``info``, ``warn`` and ``error``, in any letter case, give
     ``logging.DEBUG``, ``INFO``, ``WARNING`` and ``ERROR``; anything else, or
     the variable unset, gives ``logging.INFO``.
+
+    :returns: a ``logging`` level
     """
     return _LEVELS.get(os.environ.get(LEVEL_ENV, "").lower(), logging.INFO)
 
@@ -119,6 +121,14 @@ def handler(
     The handler never raises into the operation: a failure to write is
     ignored, as Go's example ignores it. One handler may serve several
     configurations.
+
+    :param file: the stream to write to, ``sys.stderr`` when not given
+    :param level: the lowest ``logging`` level to write
+    :param logger: a logger to write to instead of a stream
+    :param formatter: the format to write in, chosen from the stream when not given
+    :returns: a handler to pass as ``on_event``
+    :raises TypeError: for a ``level`` that is not a ``logging`` level, or a ``logger`` that is not a ``logging.Logger``
+    :raises ValueError: when both ``file`` and ``logger`` are given
     """
     if type(level) is bool or not isinstance(level, int):
         raise TypeError(f"level must be a logging level such as logging.INFO, not {level!r} ({type(level).__name__})")

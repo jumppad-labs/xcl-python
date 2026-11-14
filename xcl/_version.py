@@ -12,5 +12,6 @@ development engine always passes the check.
 """
 
 __version__ = "0.5.0.dev0"
+"""The package's own version, set from the xcl-python tag when a release is built."""
 
 __engine_version__ = "v0.0.0-dev"

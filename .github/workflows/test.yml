@@ -205,11 +205,29 @@ jobs:
       - run: python -m build --sdist
       - run: python -m twine check dist/*
 
+  # every public name and member of the package has a doc comment, read from
+  # the source, which is why this is a lint and not a test: a test could not
+  # see a constant's doc comment
+  check-docs:
+    name: Check the doc comments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: jumppad-labs/xcl-python
+          ref: ${{ inputs.python-ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: python -m pip install -r .github/scripts/requirements-docs.txt pytest
+      - run: python .github/scripts/api_reference.py --check
+      - run: python -m pytest .github/scripts
+
   # the one check to require: it fails unless every job above succeeded, and
   # always runs, so a skipped or cancelled job can never pass for a success
   result:
     name: result
-    needs: [test, test-musl, check-package]
+    needs: [test, test-musl, check-package, check-docs]
     if: always()
     runs-on: ubuntu-latest
     steps:
