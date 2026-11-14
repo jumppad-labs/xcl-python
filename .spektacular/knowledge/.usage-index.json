@@ -383,6 +383,16 @@
         "count": 0
       }
     },
+    "gotchas/zero-duration-parity-flake.md": {
+      "created": "2026-11-14T13:29:45.166689378Z",
+      "tracked_since": "2026-11-14T13:29:45.166689378Z",
+      "discoveries": {
+        "count": 0
+      },
+      "retrievals": {
+        "count": 0
+      }
+    },
     "learnings/test-suite-in-a-spec-worktree.md": {
       "created": "2026-10-26T08:33:31.225912872Z",
       "tracked_since": "2026-10-26T08:33:31.225912872Z",

@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from typing import Any, Optional
 
+import pytest
+
 Difference = tuple[str, Any, Any]
 
 
@@ -47,11 +49,50 @@ def first_difference(a: Any, b: Any, path: str = "") -> Optional[Difference]:
     return None
 
 
+def without_durations(record: dict[str, Any]) -> dict[str, Any]:
+    """A record with every pretty log line's duration left out.
+
+    Go and Python each time their own run, and both leave a zero duration out
+    of the line, so an operation faster than the clock's resolution (about
+    15 ms on Windows) has no duration on one side and one on the other:
+    whether a line has a duration is timing, not behaviour. The TypeScript
+    parity suite compares records the same way.
+    """
+    lines = record.get("pretty_log")
+    if not isinstance(lines, list):
+        return record
+    return {
+        **record,
+        "pretty_log": [line.replace(" duration=<duration>", "") if isinstance(line, str) else line for line in lines],
+    }
+
+
 def assert_same_record(name: str, go: dict[str, Any], python: dict[str, Any]) -> None:
-    found = first_difference(go, python)
+    found = first_difference(without_durations(go), without_durations(python))
     if found is not None:
         path, left, right = found
         raise AssertionError(f"fixture {name}: the records differ at {path}: go={left!r} python={right!r}")
+
+
+def test_a_pretty_log_line_with_a_duration_on_one_side_only_is_the_same_record():
+    go = {"pretty_log": ["<time> INFO create success resource=resource.recording.second duration=<duration>"]}
+    python = {"pretty_log": ["<time> INFO create success resource=resource.recording.second"]}
+
+    assert_same_record("plugin_entities", go, python)
+
+
+def test_a_pretty_log_line_that_differs_apart_from_its_duration_fails_naming_the_fixture_and_the_line():
+    go = {"pretty_log": ["<time> INFO create success resource=resource.recording.second duration=<duration>"]}
+    python = {"pretty_log": ["<time> INFO create success resource=resource.recording.first"]}
+
+    with pytest.raises(AssertionError) as raised:
+        assert_same_record("plugin_entities", go, python)
+
+    assert str(raised.value) == (
+        "fixture plugin_entities: the records differ at pretty_log[0]: "
+        "go='<time> INFO create success resource=resource.recording.second' "
+        "python='<time> INFO create success resource=resource.recording.first'"
+    )
 
 
 def test_parity_basic_types(run_parity):
