@@ -387,10 +387,22 @@
       "created": "2026-11-14T13:29:45.166689378Z",
       "tracked_since": "2026-11-14T13:29:45.166689378Z",
       "discoveries": {
-        "count": 0
+        "count": 1,
+        "last": "2026-11-14T16:32:39.746025758Z",
+        "recent": [
+          {
+            "at": "2026-11-14T16:32:39.746025758Z"
+          }
+        ]
       },
       "retrievals": {
-        "count": 0
+        "count": 1,
+        "last": "2026-11-14T16:32:43.654264583Z",
+        "recent": [
+          {
+            "at": "2026-11-14T16:32:43.654264583Z"
+          }
+        ]
       }
     },
     "learnings/test-suite-in-a-spec-worktree.md": {
