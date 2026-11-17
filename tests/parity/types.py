@@ -154,6 +154,37 @@ class EncodeService:
     name: str = xcl.field(label=True, default="")
 
 
+# -- object_values ------------------------------------------------------------
+
+
+@dataclass
+class ObjectValuesEndpoint:
+    """An object value's class: required, defaulted, optional and sensitive fields."""
+
+    port: int
+    tls: bool = False
+    path: str | None = None
+    token: xcl.Sensitive[str] | None = None
+
+
+@dataclass
+class ObjectValuesPostgres:
+    location: str
+    port: int = 5432
+    meta: xcl.Meta | None = None
+
+
+@dataclass
+class ObjectValuesApp:
+    image: str
+    default_endpoint: ObjectValuesEndpoint = xcl.field(block=False)
+    endpoints: list[ObjectValuesEndpoint] = xcl.field(block=False, default_factory=list)
+    routes: dict[str, ObjectValuesEndpoint] = xcl.field(block=False, default_factory=dict)
+    database: ObjectValuesPostgres | None = xcl.field(block=False, default=None)
+    databases: list[ObjectValuesPostgres] = xcl.field(block=False, default_factory=list)
+    meta: xcl.Meta | None = None
+
+
 # FIXTURES maps a fixture directory's name to its types: (type, subtype, class),
 # in the order of the fixture's types.json
 FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
@@ -167,6 +198,7 @@ FIXTURES: dict[str, list[tuple[str, Optional[str], type]]] = {
     "unsupported_block": [("app", None, UnsupportedBlockApp)],
     "singletons": [("runner", None, SingletonsRunner), ("agent", None, SingletonsAgent)],
     "encode": [("store", "postgres", EncodeStore), ("service", None, EncodeService)],
+    "object_values": [("database", "postgres", ObjectValuesPostgres), ("app", None, ObjectValuesApp)],
 }
 
 
@@ -182,6 +214,48 @@ HAND_BUILT: dict[str, dict[str, Callable[[], object]]] = {
             meta=xcl.Meta(name="main"),
         ),
     },
+}
+
+
+def _postgres(name: str, location: str, port: int = 5432) -> ObjectValuesPostgres:
+    return ObjectValuesPostgres(
+        location=location, port=port, meta=xcl.Meta(name=name, type="database", subtype="postgres")
+    )
+
+
+def _hand_built_edge() -> ObjectValuesApp:
+    app = ObjectValuesApp(
+        image="envoy",
+        default_endpoint=ObjectValuesEndpoint(port=443, tls=True),
+        routes={"public": ObjectValuesEndpoint(port=443, tls=True, path="/")},
+        meta=xcl.Meta(name="edge"),
+    )
+    # main.xcl sets neither list, so they are unset rather than the class's empty default
+    app.endpoints = None  # type: ignore[assignment]
+    app.databases = None  # type: ignore[assignment]
+    return app
+
+
+def _hand_built_web() -> ObjectValuesApp:
+    return ObjectValuesApp(
+        image="nginx",
+        default_endpoint=ObjectValuesEndpoint(port=80, tls=True, token=xcl.Sensitive("s3cret")),
+        endpoints=[ObjectValuesEndpoint(port=8080), ObjectValuesEndpoint(port=8443, tls=True, path="/api")],
+        routes={"public": ObjectValuesEndpoint(port=80), "admin": ObjectValuesEndpoint(port=9000, tls=True)},
+        database=_postgres("main", "eu-west-1"),
+        databases=[_postgres("a", "eu-west-2", 5433), _postgres("b", "us-east-1")],
+        # the references main.xcl writes, which show references swaps in
+        meta=xcl.Meta(
+            name="web",
+            references={"database": "database.postgres.main", "databases": "[database.postgres.a, database.postgres.b]"},
+        ),
+    )
+
+
+HAND_BUILT["object_values"] = {
+    "app.edge": _hand_built_edge,
+    "database.postgres.main": lambda: _postgres("main", "eu-west-1"),
+    "app.web": _hand_built_web,
 }
 
 

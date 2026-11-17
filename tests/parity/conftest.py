@@ -35,6 +35,18 @@ def parity_fixtures(xcl_src: Path) -> Path:
     return xcl_source.require("bindings/libxcl/testdata/parity")
 
 
+def fixture_present(parity_fixtures: Path, name: str) -> None:
+    """Skips, even in a strict run, while the xcl checkout lacks the parity fixture ``name``.
+
+    A binding suite checks xcl out at its pinned tag, which holds a newly
+    added fixture only once xcl releases it; every other missing thing still
+    fails a strict run.
+    """
+    directory = parity_fixtures / name
+    if not directory.is_dir():
+        pytest.skip(f"the parity fixture {name} is not at {directory}; it arrives with the xcl release that adds it")
+
+
 @pytest.fixture(scope="session")
 def engine() -> Path:
     """The path of the engine the run selects; skips, or fails in strict mode, when it has not been built."""

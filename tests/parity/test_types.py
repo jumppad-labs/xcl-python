@@ -9,6 +9,7 @@ from typing import Any
 from xcl._schema import schema_for
 
 from parity import types as fixture_types
+from parity.conftest import fixture_present
 
 
 def _documents(fixtures: Path, fixture: str) -> list[dict[str, Any]]:
@@ -62,3 +63,9 @@ def test_encode_types_match_fixture(parity_fixtures):
 
 def test_unsupported_block_types_match_fixture(parity_fixtures):
     assert _derived("unsupported_block") == _documents(parity_fixtures, "unsupported_block")
+
+
+def test_object_values_types_match_fixture(parity_fixtures):
+    fixture_present(parity_fixtures, "object_values")
+
+    assert _derived("object_values") == _documents(parity_fixtures, "object_values")

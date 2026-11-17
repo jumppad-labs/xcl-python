@@ -274,3 +274,135 @@ def test_nested_block_meta_field_stays_an_ordinary_value():
 
     assert team.owner == Owner(meta="lead", name="ada")
     assert team.owner.meta == "lead"
+
+
+# entity values: references held by block=False fields
+
+
+@dataclass
+class PostgresRef:
+    location: str
+    port: int = 5432
+    meta: Meta | None = None
+
+
+@dataclass
+class LabelledRef:
+    location: str
+    name: str = field(label=True, default="")
+
+
+@dataclass
+class SubtypedRef:
+    location: str
+    kind: str = field(label=True, default="")
+    name: str = field(label=True, default="")
+
+
+@dataclass
+class Endpoint:
+    port: int
+    meta_note: str = ""
+
+
+@dataclass
+class Service:
+    database: PostgresRef | None = field(block=False, default=None)
+    databases: list[PostgresRef] = field(block=False, default_factory=list)
+    by_name: dict[str, PostgresRef] = field(block=False, default_factory=dict)
+    labelled: LabelledRef | None = field(block=False, default=None)
+    subtyped: SubtypedRef | None = field(block=False, default=None)
+    endpoint: Endpoint | None = field(block=False, default=None)
+    meta: Meta | None = None
+
+
+def service_classes() -> ClassMap:
+    registry = LocalRegistry()
+    registry.register_type(Service, "hydrate_service")
+    return ClassMap(registry.types)
+
+
+def postgres_json(name: str, location: str) -> dict[str, Any]:
+    return {
+        "meta": {
+            "id": f"database.postgres.{name}",
+            "name": name,
+            "type": "database",
+            "subtype": "postgres",
+            "file": "/main.xcl",
+            "line": 1,
+            "column": 1,
+        },
+        "location": location,
+        "port": 5432,
+    }
+
+
+def service_json(**fields: Any) -> dict[str, Any]:
+    return {"meta": {"id": "hydrate_service.web", "name": "web", "type": "hydrate_service"}, **fields}
+
+
+def test_hydrate_entity_value_fills_its_meta():
+    service = hydrate(service_json(database=postgres_json("main", "eu-west-1")), registry=service_classes())
+
+    assert isinstance(service.database, PostgresRef)
+    assert isinstance(service.database.meta, Meta)
+    assert service.database.meta.id == "database.postgres.main"
+    assert service.database.meta.name == "main"
+    assert service.database.meta.subtype == "postgres"
+    assert service.database.location == "eu-west-1"
+
+
+def test_hydrate_entity_value_meta_takes_disabled_and_depends_on():
+    database = postgres_json("main", "eu-west-1")
+    database["disabled"] = True
+    database["depends_on"] = ["network.main"]
+
+    service = hydrate(service_json(database=database), registry=service_classes())
+
+    assert service.database.meta.disabled is True
+    assert service.database.meta.depends_on == ["network.main"]
+
+
+def test_hydrate_entity_value_with_one_label_fills_it_with_the_name():
+    service = hydrate(service_json(labelled=postgres_json("main", "eu-west-1")), registry=service_classes())
+
+    assert service.labelled == LabelledRef(location="eu-west-1", name="main")
+
+
+def test_hydrate_entity_value_with_two_labels_fills_the_subtype_and_name():
+    service = hydrate(service_json(subtyped=postgres_json("main", "eu-west-1")), registry=service_classes())
+
+    assert service.subtyped == SubtypedRef(location="eu-west-1", kind="postgres", name="main")
+
+
+def test_hydrate_list_of_entity_values_keeps_order_and_meta():
+    service = hydrate(
+        service_json(databases=[postgres_json("a", "eu"), postgres_json("b", "us")]), registry=service_classes()
+    )
+
+    assert [d.meta.id for d in service.databases] == ["database.postgres.a", "database.postgres.b"]
+    assert [d.location for d in service.databases] == ["eu", "us"]
+
+
+def test_hydrate_map_of_entity_values_keeps_keys_and_meta():
+    service = hydrate(
+        service_json(by_name={"primary": postgres_json("a", "eu"), "replica": postgres_json("b", "us")}),
+        registry=service_classes(),
+    )
+
+    assert list(service.by_name) == ["primary", "replica"]
+    assert service.by_name["replica"].meta.id == "database.postgres.b"
+
+
+def test_hydrate_entity_value_does_not_take_the_holding_entity_meta():
+    service = hydrate(service_json(database=postgres_json("main", "eu-west-1")), registry=service_classes())
+
+    assert service.meta.id == "hydrate_service.web"
+    assert service.database.meta.id == "database.postgres.main"
+
+
+def test_hydrate_plain_block_false_dataclass_is_an_object_without_meta():
+    service = hydrate(service_json(endpoint={"port": 80, "meta_note": "x"}), registry=service_classes())
+
+    assert service.endpoint == Endpoint(port=80, meta_note="x")

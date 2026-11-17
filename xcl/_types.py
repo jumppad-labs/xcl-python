@@ -117,7 +117,12 @@ def field(
     ``name`` is the name configuration uses when it differs from the
     attribute's; ``block=True`` makes a dataclass-typed field a nested block
     (the default for a dataclass) and ``block=False`` an attribute holding an
-    object value; ``label=True`` marks a string field that holds a block's
+    object value. A ``block=False`` dataclass with a field called ``meta`` or
+    a label field is an entity value, as a reference to a block such as
+    ``database = database.postgres.main`` gives it: it receives the
+    referenced block's labels and, in its ``meta``, its metadata, and its
+    fields may not be called ``meta``, ``disabled`` or ``depends_on``. Any
+    other ``block=False`` dataclass is a plain object. ``label=True`` marks a string field that holds a block's
     label: on an entity class it is filled from the block's label, and a
     class registered with a subtype takes two, the subtype and the label; on
     a block's element, a map of blocks fills it from the key and a list of
@@ -125,7 +130,7 @@ def field(
     ``default_factory`` are the dataclass's.
 
     :param name: the name configuration uses, when it differs from the attribute's
-    :param block: ``True`` for a nested block, ``False`` for an attribute holding an object value
+    :param block: ``True`` for a nested block, ``False`` for an attribute holding an object value, or an entity value for a dataclass with a ``meta`` or label field
     :param label: ``True`` when the field holds a block's label
     :param default: the dataclass field's default
     :param default_factory: the dataclass field's default factory
