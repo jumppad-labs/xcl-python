@@ -135,6 +135,28 @@ def _fields_of(cls: type, *, top: bool) -> list[dict[str, Any]]:
     return fields
 
 
+def _is_entity_value(cls: type) -> bool:
+    """Whether ``cls``, held by a ``block=False`` field, is an entity value rather than a plain object.
+
+    A dataclass with a field called ``meta`` or a field marked
+    ``xcl.field(label=True)`` can receive a block's identity, so it is sent
+    as the engine's entity form, as a reference to a block gives it: it is
+    filled with the referenced block's labels and metadata, as the entity
+    itself is. Any other dataclass is a plain object. The rule is the
+    TypeScript package's too.
+    """
+    return not is_singleton(cls)
+
+
+def _value_type(cls: type) -> dict[str, Any]:
+    """The schema type of a dataclass held as a value: the entity form, or a plain object."""
+    if _is_entity_value(cls):
+        # described as a block type's fields are: labels and meta are its
+        # identity, and the names every block holds cannot be declared
+        return {"entity": _fields_of(cls, top=True)}
+    return {"object": _fields_of(cls, top=False)}
+
+
 def _is_base_field(owner: type, f: dataclasses.Field[Any], annotation: Any, options: FieldOptions) -> bool:
     """Whether ``f``, a top-level field of ``owner``, is the metadata field, refusing the reserved names.
 
@@ -274,7 +296,7 @@ def _resolve(annotation: Any, where: str, options: FieldOptions) -> _Resolved:
 
     if dataclasses.is_dataclass(annotation) and isinstance(annotation, type):
         if options.block is False:
-            return _Resolved(type={"object": _fields_of(annotation, top=False)}, optional=optional, computed=computed)
+            return _Resolved(type=_value_type(annotation), optional=optional, computed=computed)
         return _Resolved(
             type=None,
             optional=optional,
@@ -341,7 +363,7 @@ def _scalar_or_collection(annotation: Any, where: str) -> _Resolved:
         element = _scalar_or_collection(element_type, where)
         return _Resolved(type={"map": element.type}, format=element.format)
     if dataclasses.is_dataclass(annotation) and isinstance(annotation, type):
-        return _Resolved(type={"object": _fields_of(annotation, top=False)})
+        return _Resolved(type=_value_type(annotation))
 
     raise SchemaError(
         f"field {where}: {_name(annotation)} has no configuration form; use str, int, float, bool, Any, "
@@ -570,6 +592,12 @@ def _hydrate_value(annotation: Any, value: Any, options: FieldOptions) -> Any:
 
     if dataclasses.is_dataclass(annotation) and isinstance(annotation, type):
         if isinstance(value, dict):
+            if options.block is False and _is_entity_value(annotation):
+                # an entity value takes its labels and metadata as the entity
+                # itself does
+                from xcl._entity import Meta
+
+                return _hydrate_into(annotation, value, Meta)
             return _hydrate_into(annotation, value, None)
         return value
 
@@ -577,13 +605,20 @@ def _hydrate_value(annotation: Any, value: Any, options: FieldOptions) -> Any:
     if origin in (list, typing.List) and isinstance(value, list):
         args = get_args(annotation)
         element = args[0] if args else Any
-        return [_hydrate_value(element, v, FieldOptions()) for v in value]
+        return [_hydrate_value(element, v, _element_options(element, options)) for v in value]
     if origin in (dict, typing.Dict) and isinstance(value, dict):
         args = get_args(annotation)
         element = args[1] if len(args) == 2 else Any
-        return {k: _hydrate_value(element, v, FieldOptions()) for k, v in value.items()}
+        return {k: _hydrate_value(element, v, _element_options(element, options)) for k, v in value.items()}
 
     return value
+
+
+def _element_options(element: Any, options: FieldOptions) -> FieldOptions:
+    """The options a list's or map's element is read with: its field's ``block``, or ``False`` within a nested collection, which holds values, never blocks."""
+    if get_origin(element) in (list, typing.List, dict, typing.Dict):
+        return FieldOptions(block=False)
+    return FieldOptions(block=options.block)
 
 
 def _sensitive_of(value: Any) -> Sensitive[Any]:
@@ -631,8 +666,25 @@ def record_of(entity: object, classes: ClassMap) -> dict[str, Any]:
 
     cls = type(entity)
     type_name, subtype = classes.names_of(cls)
-
     source = _sources.get(id(entity))
+    record = _entity_envelope(entity, source, names=(type_name, subtype))
+    record.update(_record_into(entity, source, top=True))
+    return record
+
+
+def _entity_envelope(entity: Any, source: Optional[dict[str, Any]], *, names: Optional[tuple[str, str]] = None) -> dict[str, Any]:
+    """The part of an entity's JSON every block holds: ``meta``, and ``disabled`` and ``depends_on`` when set.
+
+    They come from the instance's :class:`Meta`, or from the JSON it was
+    hydrated from when it has none. The entity itself takes its type and
+    subtype from its registration, ``names``, and must have a name unless it
+    is a singleton. An entity value held by a ``block=False`` field need not
+    be of a registered class: it keeps the type and subtype its metadata
+    holds, its subtype from its first label when it has two.
+    """
+    from xcl._entity import Meta
+
+    cls = type(entity)
     held = getattr(entity, "meta", None) if "meta" in {f.name for f in dataclasses.fields(cls)} else None
     if isinstance(held, Meta):
         meta: dict[str, Any] = held.to_record()
@@ -640,21 +692,26 @@ def record_of(entity: object, classes: ClassMap) -> dict[str, Any]:
         meta = dict(source["meta"])
     else:
         meta = {}
-    meta["type"] = type_name
-    meta.pop("subtype", None)
-    if subtype:
-        meta["subtype"] = subtype
 
     # one label field holds the name, two the subtype and the name, as
-    # hydration reads them; the registration is what names the subtype
+    # hydration reads them; the registration is what names the root's subtype
     labels = label_fields_of(cls)
+    if names is not None:
+        type_name, subtype = names
+        meta["type"] = type_name
+        meta.pop("subtype", None)
+        if subtype:
+            meta["subtype"] = subtype
+    elif len(labels) == 2 and getattr(entity, labels[0]):
+        meta["subtype"] = getattr(entity, labels[0])
+
     name = getattr(entity, labels[-1]) if labels else meta.get("name", "")
     meta.pop("name", None)
     if name:
         meta["name"] = name
-    elif not is_singleton(cls):
+    elif names is not None and not is_singleton(cls):
         raise _not_encodable(
-            f"a {_dotted_name(type_name, subtype)} entity", "it has no name; set its label field or meta.name"
+            f"a {_dotted_name(names[0], names[1])} entity", "it has no name; set its label field or meta.name"
         )
 
     record: dict[str, Any] = {"meta": meta}
@@ -668,7 +725,6 @@ def record_of(entity: object, classes: ClassMap) -> dict[str, Any]:
             record["disabled"] = True
         if source.get("depends_on"):
             record["depends_on"] = list(source["depends_on"])
-    record.update(_record_into(entity, source, top=True))
     return record
 
 
@@ -712,24 +768,36 @@ def _record_into(instance: Any, source: Optional[dict[str, Any]], *, top: bool) 
                 continue
         if value is None:
             continue
-        data[key] = _record_value(value, source.get(key) if source is not None else None)
+        data[key] = _record_value(value, source.get(key) if source is not None else None, block=options.block)
     return data
 
 
-def _record_value(value: Any, source: Any = None) -> Any:
+def _record_value(value: Any, source: Any = None, *, block: Optional[bool] = None) -> Any:
     # the mirror of _hydrate_value, read from the value hydration produced;
-    # source is the JSON it was hydrated from, where there is one
+    # source is the JSON it was hydrated from, where there is one, and block
+    # the option of the field that holds the value
     if isinstance(value, Sensitive):
         return SENSITIVE_MARKER if value.is_redacted else value.reveal()
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return _record_into(value, source if isinstance(source, dict) else None, top=False)
+        held = source if isinstance(source, dict) else None
+        if block is False and _is_entity_value(type(value)):
+            # an entity value is written with its metadata, as the entity is
+            record = _entity_envelope(value, held)
+            record.update(_record_into(value, held, top=True))
+            return record
+        return _record_into(value, held, top=False)
     if isinstance(value, (list, tuple)):
         elements = source if isinstance(source, list) else []
-        return [_record_value(v, elements[i] if i < len(elements) else None) for i, v in enumerate(value)]
+        return [_record_value(v, elements[i] if i < len(elements) else None, block=_element_block(v, block)) for i, v in enumerate(value)]
     if isinstance(value, dict):
         entries = source if isinstance(source, dict) else {}
-        return {k: _record_value(v, entries.get(k)) for k, v in value.items()}
+        return {k: _record_value(v, entries.get(k), block=_element_block(v, block)) for k, v in value.items()}
     return value
+
+
+def _element_block(element: Any, block: Optional[bool]) -> Optional[bool]:
+    # the mirror of _element_options: a nested collection holds values
+    return False if isinstance(element, (list, tuple, dict)) else block
 
 
 def _unchanged(annotation: Any, source: Any, options: FieldOptions, value: Any) -> bool:

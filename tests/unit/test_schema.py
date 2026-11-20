@@ -548,3 +548,181 @@ def test_schema_has_no_subtype_key_when_subtype_is_absent():
 
     assert doc["type"] == "app"
     assert "subtype" not in doc
+
+
+# entity values: a block=False dataclass with a meta or label field
+
+
+@dataclass
+class PostgresRef:
+    location: str
+    port: int = 5432
+    meta: Meta | None = None
+
+
+@dataclass
+class LabelledRef:
+    location: str
+    name: str = field(label=True, default="")
+
+
+@dataclass
+class SubtypedRef:
+    location: str
+    kind: str = field(label=True, default="")
+    name: str = field(label=True, default="")
+
+
+POSTGRES_ENTITY_FIELDS = [
+    {"name": "location", "type": "string"},
+    {"name": "port", "type": "number", "format": "int", "optional": True, "default": 5432},
+]
+
+
+def test_block_false_dataclass_with_meta_is_entity_value():
+    @dataclass
+    class Block:
+        database: PostgresRef = field(block=False)
+
+    assert _only_field(Block) == {"name": "database", "type": {"entity": POSTGRES_ENTITY_FIELDS}}
+
+
+def test_block_false_dataclass_with_a_label_is_entity_value():
+    @dataclass
+    class Block:
+        database: LabelledRef = field(block=False)
+
+    assert _only_field(Block) == {"name": "database", "type": {"entity": [{"name": "location", "type": "string"}]}}
+
+
+def test_block_false_dataclass_with_two_labels_is_entity_value_without_them():
+    @dataclass
+    class Block:
+        database: SubtypedRef = field(block=False)
+
+    assert _only_field(Block) == {"name": "database", "type": {"entity": [{"name": "location", "type": "string"}]}}
+
+
+def test_block_false_list_of_dataclass_with_meta_is_list_of_entity_values():
+    @dataclass
+    class Block:
+        databases: list[PostgresRef] = field(block=False, default_factory=list)
+
+    assert _only_field(Block) == {
+        "name": "databases",
+        "type": {"list": {"entity": POSTGRES_ENTITY_FIELDS}},
+        "optional": True,
+    }
+
+
+def test_block_false_dict_of_dataclass_with_meta_is_map_of_entity_values():
+    @dataclass
+    class Block:
+        databases: dict[str, PostgresRef] = field(block=False, default_factory=dict)
+
+    assert _only_field(Block) == {
+        "name": "databases",
+        "type": {"map": {"entity": POSTGRES_ENTITY_FIELDS}},
+        "optional": True,
+    }
+
+
+def test_optional_block_false_entity_value_is_optional_and_nullable():
+    @dataclass
+    class Block:
+        database: PostgresRef | None = field(block=False, default=None)
+
+    assert _only_field(Block) == {
+        "name": "database",
+        "type": {"entity": POSTGRES_ENTITY_FIELDS},
+        "optional": True,
+        "nullable": True,
+    }
+
+
+def test_block_false_dataclass_without_meta_or_label_stays_object_value():
+    @dataclass
+    class Endpoint:
+        port: int
+        tls: bool = False
+
+    @dataclass
+    class Block:
+        endpoint: Endpoint = field(block=False)
+
+    assert _only_field(Block) == {
+        "name": "endpoint",
+        "type": {
+            "object": [
+                {"name": "port", "type": "number", "format": "int"},
+                {"name": "tls", "type": "bool", "optional": True, "default": False},
+            ]
+        },
+    }
+
+
+def test_nested_block_with_meta_named_field_is_still_a_block():
+    @dataclass
+    class Owner:
+        name: str
+        meta: str = ""
+
+    @dataclass
+    class Block:
+        owner: Owner
+
+    assert _only_field(Block) == {
+        "name": "owner",
+        "kind": "block",
+        "type": {"object": [{"name": "name", "type": "string"}, {"name": "meta", "type": "string", "optional": True, "default": ""}]},
+    }
+
+
+def test_entity_value_declaring_disabled_is_refused():
+    @dataclass
+    class Broken:
+        location: str
+        disabled: bool = False
+        meta: Meta | None = None
+
+    @dataclass
+    class Block:
+        database: Broken = field(block=False)
+
+    with pytest.raises(SchemaError) as raised:
+        schema_for(Block, type_name="t")
+
+    assert str(raised.value) == 'field Broken.disabled: "disabled" is held by every block and cannot be declared, the class reads it from meta'
+
+
+def test_entity_value_declaring_depends_on_is_refused():
+    @dataclass
+    class Broken:
+        location: str
+        depends_on: list[str] = field(default_factory=list)
+        name: str = field(label=True, default="")
+
+    @dataclass
+    class Block:
+        database: Broken = field(block=False)
+
+    with pytest.raises(SchemaError) as raised:
+        schema_for(Block, type_name="t")
+
+    assert str(raised.value) == 'field Broken.depends_on: "depends_on" is held by every block and cannot be declared, the class reads it from meta'
+
+
+def test_entity_value_with_meta_of_another_type_is_refused():
+    @dataclass
+    class Broken:
+        location: str
+        meta: str = ""
+
+    @dataclass
+    class Block:
+        database: Broken = field(block=False)
+
+    with pytest.raises(SchemaError) as raised:
+        schema_for(Block, type_name="t")
+
+    assert str(raised.value) == "field Broken.meta: a field called meta is the block's metadata and must be an xcl.Meta | None, not str"

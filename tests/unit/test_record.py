@@ -533,3 +533,153 @@ def test_record_of_hydrated_edited_sensitive_is_real_value():
     app.password = Sensitive("rotated")
 
     assert record_of(app, classes())["password"] == "rotated"
+
+
+# entity values: references held by block=False fields
+
+
+@dataclass
+class PostgresRef:
+    location: str
+    port: int = 5432
+    meta: Meta | None = None
+
+
+@dataclass
+class SubtypedRef:
+    location: str
+    kind: str = field(label=True, default="")
+    name: str = field(label=True, default="")
+
+
+@dataclass
+class Service:
+    database: PostgresRef | None = field(block=False, default=None)
+    databases: list[PostgresRef] = field(block=False, default_factory=list)
+    subtyped: SubtypedRef | None = field(block=False, default=None)
+    meta: Meta | None = None
+
+
+def service_classes() -> ClassMap:
+    registry = LocalRegistry()
+    registry.register_type(Service, "record_service")
+    return ClassMap(registry.types)
+
+
+def postgres_record(name: str, location: str) -> dict[str, Any]:
+    return {
+        "meta": {
+            "id": f"database.postgres.{name}",
+            "name": name,
+            "type": "database",
+            "subtype": "postgres",
+            "file": "/main.xcl",
+            "line": 1,
+            "column": 1,
+        },
+        "location": location,
+        "port": 5432,
+    }
+
+
+def service_record() -> dict[str, Any]:
+    return {
+        "meta": {
+            "id": "record_service.web",
+            "name": "web",
+            "type": "record_service",
+            "references": {"database": "database.postgres.main", "databases": "[database.postgres.a, database.postgres.b]"},
+        },
+        "database": postgres_record("main", "eu-west-1"),
+        "databases": [postgres_record("a", "eu"), postgres_record("b", "us")],
+    }
+
+
+def test_record_of_hydrated_entity_holding_references_round_trips():
+    service = hydrate(service_record(), registry=service_classes())
+
+    assert record_of(service, service_classes()) == service_record()
+
+
+def test_record_of_hydrated_reference_with_changed_attribute_writes_its_meta():
+    service = hydrate(service_record(), registry=service_classes())
+    service.database.location = "us-east-1"
+
+    record = record_of(service, service_classes())
+
+    assert record["database"] == {
+        "meta": {
+            "id": "database.postgres.main",
+            "name": "main",
+            "type": "database",
+            "subtype": "postgres",
+            "file": "/main.xcl",
+            "line": 1,
+            "column": 1,
+        },
+        "location": "us-east-1",
+        "port": 5432,
+    }
+    assert record["databases"] == service_record()["databases"]
+
+
+def test_record_of_hand_built_reference_writes_its_meta():
+    service = Service(
+        database=PostgresRef(location="eu-west-1", meta=Meta(id="database.postgres.main", name="main", type="database", subtype="postgres")),
+        meta=Meta(name="web"),
+    )
+
+    record = record_of(service, service_classes())
+
+    assert record["database"] == {
+        "meta": {"id": "database.postgres.main", "name": "main", "type": "database", "subtype": "postgres"},
+        "location": "eu-west-1",
+        "port": 5432,
+    }
+
+
+def test_record_of_hand_built_reference_writes_disabled_and_depends_on_beside_meta():
+    service = Service(
+        database=PostgresRef(location="eu", meta=Meta(name="main", disabled=True, depends_on=["network.main"])),
+        meta=Meta(name="web"),
+    )
+
+    record = record_of(service, service_classes())
+
+    assert record["database"] == {
+        "meta": {"name": "main"},
+        "disabled": True,
+        "depends_on": ["network.main"],
+        "location": "eu",
+        "port": 5432,
+    }
+
+
+def test_record_of_hand_built_reference_with_two_labels_writes_subtype_and_name():
+    service = Service(subtyped=SubtypedRef(location="eu", kind="postgres", name="main"), meta=Meta(name="web"))
+
+    record = record_of(service, service_classes())
+
+    assert record["subtyped"] == {"meta": {"subtype": "postgres", "name": "main"}, "location": "eu"}
+
+
+def test_record_of_hand_built_list_of_references_writes_each_meta():
+    service = Service(
+        databases=[PostgresRef(location="eu", meta=Meta(name="a")), PostgresRef(location="us", meta=Meta(name="b"))],
+        meta=Meta(name="web"),
+    )
+
+    record = record_of(service, service_classes())
+
+    assert record["databases"] == [
+        {"meta": {"name": "a"}, "location": "eu", "port": 5432},
+        {"meta": {"name": "b"}, "location": "us", "port": 5432},
+    ]
+
+
+def test_record_of_hand_built_reference_without_a_name_is_written_without_one():
+    service = Service(database=PostgresRef(location="eu"), meta=Meta(name="web"))
+
+    record = record_of(service, service_classes())
+
+    assert record["database"] == {"meta": {}, "location": "eu", "port": 5432}

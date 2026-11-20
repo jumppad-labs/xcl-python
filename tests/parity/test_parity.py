@@ -12,6 +12,8 @@ from typing import Any, Optional
 
 import pytest
 
+from parity.conftest import fixture_present
+
 Difference = tuple[str, Any, Any]
 
 
@@ -147,6 +149,24 @@ def test_parity_encode(run_parity):
     go, python = run_parity("encode")
 
     assert_same_record("encode", go, python)
+
+
+def test_parity_object_values(run_parity, parity_fixtures):
+    fixture_present(parity_fixtures, "object_values")
+
+    go, python = run_parity("object_values")
+
+    assert_same_record("object_values", go, python)
+
+
+def test_parity_object_values_has_hand_built_texts_for_each_listed_address(run_parity, parity_fixtures):
+    fixture_present(parity_fixtures, "object_values")
+
+    _, python = run_parity("object_values")
+
+    for address in ("app.edge", "database.postgres.main", "app.web"):
+        assert len(python["encode"][address]["hand_built"]) == 16, f"hand-built texts of {address}"
+    assert "databases = [database.postgres.a, database.postgres.b]" in python["encode"]["app.web"]["hand_built"]["references"]
 
 
 def test_parity_unsupported_block(run_parity):
